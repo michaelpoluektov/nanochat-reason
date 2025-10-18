@@ -28,6 +28,8 @@ from tasks.gsm8k import GSM8K
 from tasks.mmlu import MMLU
 from tasks.smoltalk import SmolTalk
 
+from torchao.float8 import convert_to_float8_training, Float8LinearConfig
+
 # -----------------------------------------------------------------------------
 run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
 model_tag = None # model tag to load the model from (base model or midtrained model)
@@ -49,6 +51,9 @@ exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from 
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
 # -----------------------------------------------------------------------------
 
+use_fp8 = True
+fp8_recipe = "tensorwise" # "tensorwise", "rowwise", "rowwise_with_gw_hp"
+
 # Compute init
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
 master_process = ddp_rank == 0
@@ -65,6 +70,22 @@ pretrain_batch_size = meta.get("device_batch_size", None)
 if pretrain_batch_size is not None and device_batch_size > pretrain_batch_size:
     print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device_batch_size to this script?")
 orig_model = model
+
+if use_fp8:
+    print0("Trying fp8")
+    def _fp8_module_filter_fn(mod, fqn: str):
+        if not isinstance(mod, torch.nn.Linear):
+            return False
+        if 'transformer.h' not in fqn: # only transformer blocks
+            return False
+        if 'lm_head' in fqn: # skip last head
+            return False
+        return (mod.in_features % 16 == 0) and (mod.out_features % 16 == 0)
+
+    config = Float8LinearConfig.from_recipe_name(fp8_recipe)
+    convert_to_float8_training(model, config=config, module_filter_fn=_fp8_module_filter_fn)
+    print0(f"Using torch/ao fp8 training recipe: '{fp8_recipe}'.")
+
 model = torch.compile(model, dynamic=False)
 depth = model.config.n_layer
 num_flops_per_token = model.estimate_flops()
