@@ -29,7 +29,7 @@ from tasks.smoltalk import SmolTalk
 
 # -----------------------------------------------------------------------------
 # SFT Hyperparameters
-run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
+run = os.environ.get("WANDB_RUN") # wandb run name default ("dummy" is special - we won't log to wandb)
 # input model options
 source = "mid" # base|mid , which checkpoint to load the model from (base model or midtrained model)
 model_tag = None # model tag to load the model from (base model or midtrained model)

@@ -18,7 +18,6 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=default
 
 import os
 import itertools
-import re
 import wandb
 import torch
 import torch.distributed as dist
@@ -29,7 +28,7 @@ from nanochat.engine import Engine
 from tasks.gsm8k import GSM8K
 
 # RL hyperparameters
-run = "dummy" # wandb run name
+run = os.environ.get("WANDB_RUN") # wandb run name
 source = "sft" # mid|sft
 dtype = "bfloat16"
 device_batch_size = 8 # no forward pass will go above this to not OOM

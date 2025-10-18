@@ -31,7 +31,7 @@ from tasks.smoltalk import SmolTalk
 from torchao.float8 import convert_to_float8_training, Float8LinearConfig
 
 # -----------------------------------------------------------------------------
-run = "dummy" # wandb run name default ("dummy" is special - we won't log to wandb)
+run = os.environ.get("WANDB_RUN") # wandb run name default ("dummy" is special - we won't log to wandb)
 model_tag = None # model tag to load the model from (base model or midtrained model)
 step = None # step to load the model from (base model or midtrained model)
 dtype = "bfloat16"
