@@ -40,6 +40,8 @@ WORKDIR /workspace
 # Copy project files into the image
 COPY . .
 
+RUN install -m 0755 scripts/forward_env_entrypoint.sh /usr/local/bin/forward_env_entrypoint.sh
+
 # Create project venv, install Python deps, and pre-build the Rust tokenizer
 RUN set -eux; \
   uv venv --python=python3; \
@@ -51,4 +53,5 @@ ENV PATH="/workspace/.venv/bin:${PATH}"
 ENV PYTHONPATH="/workspace"
 ENV UV_PROJECT_ENVIRONMENT="/workspace/.venv"
 
+ENTRYPOINT ["/usr/local/bin/forward_env_entrypoint.sh"]
 CMD ["/bin/bash"]
