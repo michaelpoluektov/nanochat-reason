@@ -17,8 +17,12 @@ import torch
 import torch.distributed as dist
 
 from nanochat.common import compute_init, compute_cleanup, get_base_dir, print0, DummyWandb
-from nanochat.checkpoint_manager import load_model
-from nanochat.checkpoint_manager import save_checkpoint
+from nanochat.checkpoint_manager import (
+    load_model,
+    save_checkpoint,
+    get_hf_upload_config_from_env,
+    maybe_upload_checkpoint,
+)
 from nanochat.engine import Engine
 from scripts.chat_eval import run_chat_eval
 
@@ -50,6 +54,7 @@ init_lr_frac = 0.02
 eval_every = 100
 eval_steps = 100
 eval_metrics_every = 200
+hf_upload = get_hf_upload_config_from_env()
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
@@ -258,6 +263,13 @@ if master_process:
         }
     )
     print(f"✅ Saved model checkpoint to {checkpoint_dir}")
+    maybe_upload_checkpoint(
+        "sft",
+        model_tag=model_tag,
+        step=step,
+        config=hf_upload,
+        default_commit_message=f"Upload checkpoint {model_tag} step {step:06d}",
+    )
 
 # Log to report
 from nanochat.report import get_report

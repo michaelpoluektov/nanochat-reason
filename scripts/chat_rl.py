@@ -23,7 +23,12 @@ import torch
 import torch.distributed as dist
 
 from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb
-from nanochat.checkpoint_manager import save_checkpoint, load_model
+from nanochat.checkpoint_manager import (
+    save_checkpoint,
+    load_model,
+    get_hf_upload_config_from_env,
+    maybe_upload_checkpoint,
+)
 from nanochat.engine import Engine
 from tasks.gsm8k import GSM8K
 
@@ -46,6 +51,7 @@ num_epochs = 1 # how many epochs of gsm8k to train on
 save_every = 60 # every how many steps to save the model
 eval_every = 60 # every how many steps to evaluate the model for val pass@k
 eval_examples = 400 # number of examples used for evaluating pass@k
+hf_upload = get_hf_upload_config_from_env()
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
@@ -319,6 +325,15 @@ for step in range(num_steps):
             }
         )
         print(f"✅ Saved model checkpoint to {checkpoint_dir}")
+        should_upload = hf_upload.upload_every_save or step == num_steps - 1
+        if should_upload:
+            maybe_upload_checkpoint(
+                "rl",
+                model_tag=model_tag,
+                step=step,
+                config=hf_upload,
+                default_commit_message=f"Upload checkpoint {model_tag} step {step:06d}",
+            )
 
 # Log to report
 from nanochat.report import get_report

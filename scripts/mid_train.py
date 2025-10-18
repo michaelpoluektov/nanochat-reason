@@ -18,9 +18,13 @@ import torch
 
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, get_base_dir
 from nanochat.tokenizer import get_token_bytes
-from nanochat.checkpoint_manager import save_checkpoint
+from nanochat.checkpoint_manager import (
+    save_checkpoint,
+    load_model,
+    get_hf_upload_config_from_env,
+    maybe_upload_checkpoint,
+)
 from nanochat.loss_eval import evaluate_bpb
-from nanochat.checkpoint_manager import load_model
 import torch.distributed as dist
 
 from tasks.common import TaskMixture
@@ -46,6 +50,7 @@ eval_every = 150
 eval_tokens = 20*524288
 total_batch_size = 524288
 dry_run = 0 # dry_run=1 is for experiments: we will log to wandb but we won't write checkpoints or report
+hf_upload = get_hf_upload_config_from_env()
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
@@ -228,6 +233,13 @@ while True:
                 },
                 "user_config": user_config, # inputs to the training script
             }
+        )
+        maybe_upload_checkpoint(
+            "mid",
+            model_tag=output_dirname,
+            step=step,
+            config=hf_upload,
+            default_commit_message=f"Upload checkpoint {output_dirname} step {step:06d}",
         )
 
     if last_step:

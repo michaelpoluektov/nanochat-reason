@@ -18,7 +18,11 @@ from nanochat.gpt import GPT, GPTConfig
 from nanochat.dataloader import tokenizing_distributed_data_loader
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
-from nanochat.checkpoint_manager import save_checkpoint
+from nanochat.checkpoint_manager import (
+    save_checkpoint,
+    get_hf_upload_config_from_env,
+    maybe_upload_checkpoint,
+)
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from scripts.base_eval import evaluate_model
@@ -55,6 +59,7 @@ sample_every = 2000 # every how many steps to sample from the model
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
 use_fp8 = True
 fp8_recipe = "tensorwise" # "tensorwise", "rowwise", "rowwise_with_gw_hp"
+hf_upload = get_hf_upload_config_from_env()
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
@@ -267,6 +272,13 @@ for step in range(num_iterations + 1):
                 "device_batch_size": device_batch_size,
                 "max_seq_len": max_seq_len,
             }
+        )
+        maybe_upload_checkpoint(
+            "base",
+            model_tag=output_dirname,
+            step=step,
+            config=hf_upload,
+            default_commit_message=f"Upload checkpoint {output_dirname} step {step:06d}",
         )
 
     if last_step:
