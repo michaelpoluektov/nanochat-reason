@@ -30,6 +30,7 @@ from scripts.base_eval import evaluate_model
 from torchao.float8 import convert_to_float8_training, Float8LinearConfig
 
 print_banner()
+wandb.login()
 
 # -----------------------------------------------------------------------------
 # User settings

@@ -34,6 +34,7 @@ from tasks.gsm8k import GSM8K
 
 # RL hyperparameters
 run = os.environ.get("WANDB_RUN") # wandb run name
+wandb.login()
 source = "sft" # mid|sft
 dtype = "bfloat16"
 device_batch_size = 8 # no forward pass will go above this to not OOM
