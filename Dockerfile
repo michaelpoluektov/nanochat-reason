@@ -23,6 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 # Install uv (Python package/dependency manager)
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
@@ -39,15 +41,14 @@ WORKDIR /workspace
 COPY . .
 
 # Create project venv, install Python deps, and pre-build the Rust tokenizer
-RUN set -euxo pipefail; \
+RUN set -eux; \
     uv venv --python=python3; \
     uv sync --frozen; \
-    . .venv/bin/activate; \
     uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 
 # Make project virtualenv active by default
 ENV PATH="/workspace/.venv/bin:${PATH}"
-ENV PYTHONPATH="/workspace:${PYTHONPATH}"
+ENV PYTHONPATH="/workspace"
 ENV UV_PROJECT_ENVIRONMENT="/workspace/.venv"
 
 CMD ["/bin/bash"]
