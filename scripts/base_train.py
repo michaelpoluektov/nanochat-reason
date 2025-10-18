@@ -22,6 +22,9 @@ from nanochat.checkpoint_manager import save_checkpoint
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from scripts.base_eval import evaluate_model
+
+from torchao.float8 import convert_to_float8_training, Float8LinearConfig
+
 print_banner()
 
 # -----------------------------------------------------------------------------
@@ -50,6 +53,8 @@ core_metric_max_per_task = 500 # examples per task in estimating the core metric
 sample_every = 2000 # every how many steps to sample from the model
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
+use_fp8 = False
+fp8_recipe = "tensorwise" # "tensorwise", "rowwise", "rowwise_with_gw_hp"
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
@@ -98,7 +103,23 @@ with torch.device("meta"):
     model = GPT(model_config)
 model.to_empty(device="cuda")
 model.init_weights()
-orig_model = model # original, uncompiled model, for saving raw model state_dict
+
+if use_fp8:
+    print0("Trying fp8")
+    def _fp8_module_filter_fn(mod, fqn: str):
+        if not isinstance(mod, torch.nn.Linear):
+            return False
+        if 'transformer.h' not in fqn: # only transformer blocks
+            return False
+        if 'lm_head' in fqn: # skip last head
+            return False
+        return (mod.in_features % 16 == 0) and (mod.out_features % 16 == 0)
+
+    config = Float8LinearConfig.from_recipe_name(fp8_recipe)
+    convert_to_float8_training(model, config=config, module_filter_fn=_fp8_module_filter_fn)
+    print0(f"Using torch/ao fp8 training recipe: '{fp8_recipe}'.")
+
+# Compile after any optional conversions
 model = torch.compile(model, dynamic=False) # TODO: dynamic True/False think through
 num_params = sum(p.numel() for p in model.parameters())
 print0(f"Number of parameters: {num_params:,}")
