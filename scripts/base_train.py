@@ -53,7 +53,7 @@ core_metric_max_per_task = 500 # examples per task in estimating the core metric
 sample_every = 2000 # every how many steps to sample from the model
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
-use_fp8 = False
+use_fp8 = True
 fp8_recipe = "tensorwise" # "tensorwise", "rowwise", "rowwise_with_gw_hp"
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
@@ -103,6 +103,8 @@ with torch.device("meta"):
     model = GPT(model_config)
 model.to_empty(device="cuda")
 model.init_weights()
+
+orig_model = model
 
 if use_fp8:
     print0("Trying fp8")
