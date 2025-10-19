@@ -197,6 +197,7 @@ min_val_bpb = float("inf")
 smooth_train_loss = 0 # EMA of training loss
 ema_beta = 0.9 # EMA decay factor
 total_training_time = 0 # total wall-clock time of training
+val_bpb = None
 # note that we run +1 steps only so that we can eval and save at the end
 for step in range(num_iterations + 1):
     last_step = step == num_iterations
@@ -238,7 +239,7 @@ for step in range(num_iterations + 1):
     # once in a while: sample from the model (only on master process)
     # use the original uncompiled model because the inputs keep changing shape
     if master_process and (last_step or (step > 0 and step % sample_every == 0)):
-        orig_model.eval()
+        model.eval()
         prompts = [
             "The capital of France is",
             "The chemical symbol of gold is",
@@ -248,13 +249,12 @@ for step in range(num_iterations + 1):
             "My favorite color is",
             "If 5*x + 3 = 13, then x is",
         ]
-        engine = Engine(orig_model, tokenizer)
+        engine = Engine(model, tokenizer)
         for prompt in prompts:
             tokens = tokenizer(prompt, prepend="<|bos|>")
             with autocast_ctx:
                 sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0)
             print0(tokenizer.decode(sample[0]))
-        orig_model.train()
         model.train()
 
     # save checkpoint at the end of the run (only on master process)
