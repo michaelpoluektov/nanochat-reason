@@ -14,6 +14,13 @@ import time
 import wandb
 import torch
 
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.dataloader import tokenizing_distributed_data_loader
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir
@@ -58,7 +65,7 @@ core_metric_max_per_task = 500 # examples per task in estimating the core metric
 sample_every = 2000 # every how many steps to sample from the model
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
-use_fp8 = True
+use_fp8 = _env_flag("USE_FP8", True)
 fp8_recipe = "tensorwise" # "tensorwise", "rowwise", "rowwise_with_gw_hp"
 hf_upload = get_hf_upload_config_from_env()
 # now allow CLI to override the settings via the configurator lol

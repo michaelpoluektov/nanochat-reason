@@ -34,6 +34,14 @@ from tasks.smoltalk import SmolTalk
 
 from torchao.float8 import convert_to_float8_training, Float8LinearConfig
 
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 # -----------------------------------------------------------------------------
 run = os.environ.get("WANDB_RUN") # wandb run name default ("dummy" is special - we won't log to wandb)
 wandb.login()
@@ -57,7 +65,7 @@ exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from 
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
 # -----------------------------------------------------------------------------
 
-use_fp8 = True
+use_fp8 = _env_flag("USE_FP8", True)
 fp8_recipe = "tensorwise" # "tensorwise", "rowwise", "rowwise_with_gw_hp"
 
 # Compute init

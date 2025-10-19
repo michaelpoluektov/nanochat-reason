@@ -167,6 +167,11 @@ class Engine:
         device = self.model.get_device()
         rng = torch.Generator(device=device)
         rng.manual_seed(seed)
+        vocab_size = self.model.config.vocab_size
+        embed_dtype = self.model.transformer.wte.weight.dtype
+
+        def to_one_hot(token_tensor):
+            return F.one_hot(token_tensor, num_classes=vocab_size).to(device=device, dtype=embed_dtype)
 
         # Get the special tokens we need to coordinate the tool use state machine
         get_special = lambda s: self.tokenizer.encode_special(s)
@@ -186,7 +191,7 @@ class Engine:
             **kv_model_kwargs,
         )
         ids = torch.tensor([tokens], dtype=torch.long, device=device)
-        logits = self.model.forward(ids, kv_cache=kv_cache_prefill)
+        logits = self.model.forward(to_one_hot(ids), kv_cache=kv_cache_prefill)
         logits = logits[:, -1, :]
         next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
         sampled_tokens = next_ids[:, 0].tolist()
@@ -223,7 +228,7 @@ class Engine:
                 first_iteration = False
             else:
                 # Forward the model and get the next token for each row
-                logits = self.model.forward(ids, kv_cache=kv_cache_decode)  # (B, T, vocab_size)
+                logits = self.model.forward(to_one_hot(ids), kv_cache=kv_cache_decode)  # (B, T, vocab_size)
                 logits = logits[:, -1, :]  # (B, vocab_size) at last time step
                 next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
                 sampled_tokens = next_ids[:, 0].tolist()
