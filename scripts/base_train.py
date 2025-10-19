@@ -110,7 +110,6 @@ with torch.device("meta"):
 model.to_empty(device="cuda")
 model.init_weights()
 
-orig_model = model
 
 if use_fp8:
     print0("Trying fp8")
@@ -126,6 +125,9 @@ if use_fp8:
     config = Float8LinearConfig.from_recipe_name(fp8_recipe)
     convert_to_float8_training(model, config=config, module_filter_fn=_fp8_module_filter_fn)
     print0(f"Using torch/ao fp8 training recipe: '{fp8_recipe}'.")
+
+
+orig_model = model
 
 # Compile after any optional conversions
 model = torch.compile(model, dynamic=False) # TODO: dynamic True/False think through
@@ -239,7 +241,7 @@ for step in range(num_iterations + 1):
     # once in a while: sample from the model (only on master process)
     # use the original uncompiled model because the inputs keep changing shape
     if master_process and (last_step or (step > 0 and step % sample_every == 0)):
-        model.eval()
+        orig_model.eval()
         prompts = [
             "The capital of France is",
             "The chemical symbol of gold is",
@@ -249,7 +251,7 @@ for step in range(num_iterations + 1):
             "My favorite color is",
             "If 5*x + 3 = 13, then x is",
         ]
-        engine = Engine(model, tokenizer)
+        engine = Engine(orig_model, tokenizer)
         for prompt in prompts:
             tokens = tokenizer(prompt, prepend="<|bos|>")
             with autocast_ctx:
