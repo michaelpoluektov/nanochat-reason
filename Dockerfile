@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   ca-certificates \
   cmake \
   ninja-build \
+  vim \
   && rm -rf /var/lib/apt/lists/*
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
@@ -38,7 +39,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /workspace
 
 # Copy project files into the image
-COPY . .
+RUN git clone https://github.com/michaelpoluektov/nanochat-reason.git .
 
 RUN install -m 0755 scripts/forward_env_entrypoint.sh /usr/local/bin/forward_env_entrypoint.sh
 
