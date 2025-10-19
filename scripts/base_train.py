@@ -115,12 +115,18 @@ if use_fp8:
     print0("Trying fp8")
     def _fp8_module_filter_fn(mod, fqn: str):
         if not isinstance(mod, torch.nn.Linear):
+            print(fqn)
             return False
         if 'transformer.h' not in fqn: # only transformer blocks
+            print(fqn)
             return False
         if 'lm_head' in fqn: # skip last head
+            print(fqn)
             return False
-        return (mod.in_features % 16 == 0) and (mod.out_features % 16 == 0)
+        ret = (mod.in_features % 16 == 0) and (mod.out_features % 16 == 0)
+        if not ret:
+            print(fqn)
+        return ret
 
     config = Float8LinearConfig.from_recipe_name(fp8_recipe)
     convert_to_float8_training(model, config=config, module_filter_fn=_fp8_module_filter_fn)
