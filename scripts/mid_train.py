@@ -75,7 +75,6 @@ model, tokenizer, meta = load_model("base", device, phase="train", model_tag=mod
 pretrain_batch_size = meta.get("device_batch_size", None)
 if pretrain_batch_size is not None and device_batch_size > pretrain_batch_size:
     print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device_batch_size to this script?")
-orig_model = model
 
 if use_fp8:
     print0("Trying fp8")
@@ -91,6 +90,8 @@ if use_fp8:
     config = Float8LinearConfig.from_recipe_name(fp8_recipe)
     convert_to_float8_training(model, config=config, module_filter_fn=_fp8_module_filter_fn)
     print0(f"Using torch/ao fp8 training recipe: '{fp8_recipe}'.")
+    
+orig_model = model
 
 model = torch.compile(model, dynamic=False)
 depth = model.config.n_layer
