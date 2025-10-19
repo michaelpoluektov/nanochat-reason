@@ -170,9 +170,6 @@ class Engine:
         vocab_size = self.model.config.vocab_size
         embed_dtype = self.model.transformer.wte.weight.dtype
 
-        def to_one_hot(token_tensor):
-            return F.one_hot(token_tensor, num_classes=vocab_size).to(device=device, dtype=embed_dtype)
-
         # Get the special tokens we need to coordinate the tool use state machine
         get_special = lambda s: self.tokenizer.encode_special(s)
         python_start = get_special("<|python_start|>")
@@ -191,7 +188,8 @@ class Engine:
             **kv_model_kwargs,
         )
         ids = torch.tensor([tokens], dtype=torch.long, device=device)
-        logits = self.model.forward(to_one_hot(ids), kv_cache=kv_cache_prefill)
+        one_hot_ids = F.one_hot(ids, num_classes=vocab_size).to(device=device, dtype=embed_dtype)
+        logits = self.model.forward(one_hot_ids, kv_cache=kv_cache_prefill)
         logits = logits[:, -1, :]
         next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
         sampled_tokens = next_ids[:, 0].tolist()
@@ -228,20 +226,27 @@ class Engine:
                 first_iteration = False
             else:
                 # Forward the model and get the next token for each row
-                logits = self.model.forward(to_one_hot(ids), kv_cache=kv_cache_decode)  # (B, T, vocab_size)
+                logits = self.model.forward(one_hot_ids, kv_cache=kv_cache_decode)  # (B, T, vocab_size)
                 logits = logits[:, -1, :]  # (B, vocab_size) at last time step
                 next_ids = sample_next_token(logits, rng, temperature, top_k)  # (B, 1)
                 sampled_tokens = next_ids[:, 0].tolist()
 
             # Process each row: choose the next token, update state, optional tool use
-            token_column = [] # contains the next token id along each row
+            token_column = [] # contains the next token as one-hot vector along each row
             token_masks = [] # contains the mask (was it sampled (1) or forced (0)?) along each row
             for i, state in enumerate(row_states):
                 # Select the next token in this row
                 is_forced = len(state.forced_tokens) > 0 # are there tokens waiting to be forced in deque?
                 token_masks.append(0 if is_forced else 1) # mask is 0 if forced, 1 if sampled
                 next_token = state.forced_tokens.popleft() if is_forced else sampled_tokens[i]
-                token_column.append(next_token)
+                if is_forced:
+                    token_one_hot = F.one_hot(
+                        torch.tensor(next_token, dtype=torch.long, device=device),
+                        num_classes=vocab_size,
+                    ).to(device=device, dtype=embed_dtype)
+                else:
+                    token_one_hot = F.softmax(logits[0], dim=0)
+                token_column.append(token_one_hot)
                 # Update the state of this row to include the next token
                 state.current_tokens.append(next_token)
                 # On <|assistant_end|> or <|bos|>, mark the row as completed
@@ -269,7 +274,7 @@ class Engine:
             yield token_column, token_masks
             num_generated += 1
             # Prepare ids for next iteration
-            ids = torch.tensor(token_column, dtype=torch.long, device=device).unsqueeze(1)
+            one_hot_ids = torch.stack(token_column, dim=0).unsqueeze(1).to(device=device, dtype=embed_dtype)
 
     def generate_batch(self, tokens, num_samples=1, **kwargs):
         """
@@ -285,10 +290,11 @@ class Engine:
         for token_column, token_masks in self.generate(tokens, num_samples, **kwargs):
             for i, (token, mask) in enumerate(zip(token_column, token_masks)):
                 if not completed[i]:
-                    if token == assistant_end or token == bos:
+                    token_id = int(torch.argmax(token).item())
+                    if token_id == assistant_end or token_id == bos:
                         completed[i] = True
                     else:
-                        results[i].append(token)
+                        results[i].append(token_id)
                         masks[i].append(mask)
             # Stop if all rows are completed
             if all(completed):
@@ -332,9 +338,10 @@ if __name__ == "__main__":
     torch.cuda.synchronize()
     t0 = time.time()
     for token_column, token_masks in stream:
-        token = token_column[0] # only print out the first row
-        generated_tokens.append(token)
-        chunk = tokenizer.decode([token])
+        token_vector = token_column[0] # only print out the first row
+        token_id = int(torch.argmax(token_vector).item())
+        generated_tokens.append(token_id)
+        chunk = tokenizer.decode([token_id])
         print(chunk, end="", flush=True)
     print()
     torch.cuda.synchronize()

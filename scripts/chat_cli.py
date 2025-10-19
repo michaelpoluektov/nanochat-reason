@@ -107,9 +107,10 @@ while True:
         for token_column, token_masks in engine.generate(
             conversation_tokens, **generate_kwargs
         ):
-            token = token_column[0]  # pop the batch dimension (num_samples=1)
-            response_tokens.append(token)
-            token_text = tokenizer.decode([token])
+            token_vector = token_column[0]  # pop the batch dimension (num_samples=1)
+            token_id = int(torch.argmax(token_vector).item())
+            response_tokens.append(token_id)
+            token_text = tokenizer.decode([token_id])
             print(token_text, end="", flush=True)
     print()
     # we have to ensure that the assistant end token is the last token

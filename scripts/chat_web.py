@@ -272,7 +272,8 @@ async def generate_stream(
             top_k=top_k,
             seed=random.randint(0, 2**31 - 1)
         ):
-            token = token_column[0]
+            token_vector = token_column[0]
+            token = int(torch.argmax(token_vector).item())
 
             # Stopping criteria
             if token == assistant_end or token == bos:
