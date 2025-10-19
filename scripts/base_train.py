@@ -247,7 +247,7 @@ for step in range(num_iterations + 1):
     # once in a while: sample from the model (only on master process)
     # use the original uncompiled model because the inputs keep changing shape
     if master_process and (last_step or (step > 0 and step % sample_every == 0)):
-        orig_model.eval()
+        model.eval()
         prompts = [
             "The capital of France is",
             "The chemical symbol of gold is",
@@ -257,7 +257,7 @@ for step in range(num_iterations + 1):
             "My favorite color is",
             "If 5*x + 3 = 13, then x is",
         ]
-        engine = Engine(orig_model, tokenizer)
+        engine = Engine(model, tokenizer)
         for prompt in prompts:
             tokens = tokenizer(prompt, prepend="<|bos|>")
             with autocast_ctx:
