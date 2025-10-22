@@ -14,6 +14,7 @@ from nanochat.dataloader import tokenizing_distributed_data_loader
 from nanochat.tokenizer import get_token_bytes
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
+from nanochat.device import get_autocast_kwargs
 
 # Configuration
 device_batch_size = 32
@@ -28,7 +29,7 @@ model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=mode
 sequence_len = meta["model_config"]["sequence_len"] # could be arbitrary really
 
 # Set up the precision we'll run with
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+autocast_ctx = torch.amp.autocast(**get_autocast_kwargs(device))
 
 # Evaluate the loss on each split
 tokens_per_step = device_batch_size * sequence_len * ddp_world_size
@@ -37,7 +38,7 @@ steps = split_tokens // tokens_per_step
 token_bytes = get_token_bytes(device=device)
 bpb_results = {}
 for split_name in ["train", "val"]:
-    loader = tokenizing_distributed_data_loader(device_batch_size, sequence_len, split_name)
+    loader = tokenizing_distributed_data_loader(device_batch_size, sequence_len, split_name, device=device)
     with autocast_ctx:
         bpb = evaluate_bpb(model, loader, steps, token_bytes)
     print0(f"{split_name} bpb: {bpb:.4f}")

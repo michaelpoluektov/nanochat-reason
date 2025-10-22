@@ -48,6 +48,7 @@ from dataclasses import dataclass
 from nanochat.common import compute_init
 from nanochat.checkpoint_manager import load_model
 from nanochat.engine import Engine
+from nanochat.device import get_default_device, get_autocast_kwargs
 
 # Abuse prevention limits
 MAX_MESSAGES_PER_REQUEST = 500
@@ -94,22 +95,34 @@ class Worker:
 class WorkerPool:
     """Pool of workers, each with a model replica on a different GPU."""
 
-    def __init__(self, num_gpus: Optional[int] = None):
-        self.num_gpus = num_gpus if num_gpus is not None else torch.cuda.device_count()
+    def __init__(self, num_gpus: Optional[int] = None, base_device: Optional[torch.device] = None):
+        self.base_device = base_device or get_default_device()
+        if self.base_device.type == "cuda":
+            available = torch.cuda.device_count()
+        else:
+            available = 1
+        self.num_gpus = num_gpus if num_gpus is not None else available
+        if self.base_device.type != "cuda" and self.num_gpus > 1:
+            raise ValueError(f"Requested {self.num_gpus} devices but only one '{self.base_device.type}' device is available")
         self.workers: List[Worker] = []
         self.available_workers: asyncio.Queue = asyncio.Queue()
 
     async def initialize(self, source: str, model_tag: Optional[str] = None, step: Optional[int] = None):
         """Load model on each GPU."""
-        print(f"Initializing worker pool with {self.num_gpus} GPUs...")
+        print(f"Initializing worker pool with {self.num_gpus} device(s)...")
 
         for gpu_id in range(self.num_gpus):
-            device = torch.device(f"cuda:{gpu_id}")
-            print(f"Loading model on GPU {gpu_id}...")
+            if self.base_device.type == "cuda":
+                device = torch.device(f"cuda:{gpu_id}")
+                device_label = f"cuda:{gpu_id}"
+            else:
+                device = self.base_device
+                device_label = str(device)
+            print(f"Loading model on device {device_label}...")
 
             model, tokenizer, _ = load_model(source, device, phase="eval", model_tag=model_tag, step=step)
             engine = Engine(model, tokenizer)
-            autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+            autocast_ctx = torch.amp.autocast(**get_autocast_kwargs(device))
 
             worker = Worker(
                 gpu_id=gpu_id,
@@ -208,7 +221,7 @@ def validate_chat_request(request: ChatRequest):
 async def lifespan(app: FastAPI):
     """Load models on all GPUs on startup."""
     print("Loading nanochat models across GPUs...")
-    app.state.worker_pool = WorkerPool(num_gpus=args.num_gpus)
+    app.state.worker_pool = WorkerPool(num_gpus=args.num_gpus, base_device=device)
     await app.state.worker_pool.initialize(args.source, model_tag=args.model_tag, step=args.step)
     print(f"Server ready at http://localhost:{args.port}")
     yield

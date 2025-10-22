@@ -8,6 +8,8 @@ import logging
 import torch
 import torch.distributed as dist
 
+from nanochat.device import get_default_device
+
 
 class ColoredFormatter(logging.Formatter):
     """Custom formatter that adds colors to log messages."""
@@ -117,7 +119,8 @@ def compute_init():
 
     # Reproducibility
     torch.manual_seed(42)
-    torch.cuda.manual_seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(42)
     # skipping full reproducibility for now, possibly investigate slowdown later
     # torch.use_deterministic_algorithms(True)
     # torch.backends.cudnn.deterministic = True
@@ -131,11 +134,15 @@ def compute_init():
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
     if ddp:
         device = torch.device("cuda", ddp_local_rank)
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA device required for distributed training")
         torch.cuda.set_device(device)  # make "cuda" default to this device
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()
     else:
-        device = torch.device("mps")
+        device = get_default_device()
+        if device.type == "cuda":
+            torch.cuda.set_device(device)
 
     if ddp_rank == 0:
         logger.info(f"Distributed world size: {ddp_world_size}")

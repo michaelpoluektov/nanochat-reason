@@ -14,17 +14,11 @@ import time
 import wandb
 import torch
 
-
-def _env_flag(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
-
 from nanochat.gpt import GPT, GPTConfig
 from nanochat.dataloader import tokenizing_distributed_data_loader
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
+from nanochat.device import get_autocast_kwargs
 from nanochat.checkpoint_manager import (
     save_checkpoint,
     get_hf_upload_config_from_env,
@@ -33,8 +27,6 @@ from nanochat.checkpoint_manager import (
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
 from scripts.base_eval import evaluate_model
-
-from torchao.float8 import convert_to_float8_training, Float8LinearConfig
 
 print_banner()
 wandb.login()
@@ -65,8 +57,6 @@ core_metric_max_per_task = 500 # examples per task in estimating the core metric
 sample_every = 2000 # every how many steps to sample from the model
 # Output
 model_tag = "" # optionally override the model tag for the output checkpoint directory name
-use_fp8 = _env_flag("USE_FP8", True)
-fp8_recipe = "tensorwise" # "tensorwise", "rowwise", "rowwise_with_gw_hp"
 hf_upload = get_hf_upload_config_from_env()
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
@@ -77,7 +67,8 @@ user_config = {k: globals()[k] for k in config_keys} # will be useful for loggin
 # Compute init
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+autocast_ctx = torch.amp.autocast(**get_autocast_kwargs(device))
+is_cuda = device.type == "cuda"
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
@@ -114,31 +105,8 @@ model_config_kwargs = dict(sequence_len=max_seq_len, vocab_size=vocab_size, n_la
 with torch.device("meta"):
     model_config = GPTConfig(**model_config_kwargs)
     model = GPT(model_config)
-model.to_empty(device="cuda")
+model.to_empty(device=device)
 model.init_weights()
-
-
-if use_fp8:
-    print0("Trying fp8")
-    def _fp8_module_filter_fn(mod, fqn: str):
-        if not isinstance(mod, torch.nn.Linear):
-            print(fqn)
-            return False
-        if 'transformer.h' not in fqn: # only transformer blocks
-            print(fqn)
-            return False
-        if 'lm_head' in fqn: # skip last head
-            print(fqn)
-            return False
-        ret = (mod.in_features % 16 == 0) and (mod.out_features % 16 == 0)
-        if not ret:
-            print(fqn)
-        return ret
-
-    config = Float8LinearConfig.from_recipe_name(fp8_recipe)
-    convert_to_float8_training(model, config=config, module_filter_fn=_fp8_module_filter_fn)
-    print0(f"Using torch/ao fp8 training recipe: '{fp8_recipe}'.")
-
 
 orig_model = model
 
@@ -177,8 +145,8 @@ adamw_optimizer, muon_optimizer = optimizers
 # Initialize the DataLoaders for train/val
 base_dir = get_base_dir()
 tokens_dir = os.path.join(base_dir, "tokenized_data")
-train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train")
-build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val")
+train_loader = tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="train", device=device)
+build_val_loader = lambda: tokenizing_distributed_data_loader(device_batch_size, max_seq_len, split="val", device=device)
 x, y = next(train_loader) # kick off load of the very first batch of data
 
 # -----------------------------------------------------------------------------
@@ -304,7 +272,8 @@ for step in range(num_iterations + 1):
     # -------------------------------------------------------------------------
     # single training step
     # evaluate the gradient
-    torch.cuda.synchronize()
+    if is_cuda:
+        torch.cuda.synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
@@ -327,7 +296,8 @@ for step in range(num_iterations + 1):
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
-    torch.cuda.synchronize()
+    if is_cuda:
+        torch.cuda.synchronize()
     t1 = time.time()
     dt = t1 - t0
     # -------------------------------------------------------------------------
@@ -356,7 +326,11 @@ for step in range(num_iterations + 1):
         })
 
 # print a few more stats
-print0(f"Peak memory usage: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MiB")
+peak_mem_mb = (torch.cuda.max_memory_allocated() / 1024 / 1024) if is_cuda else None
+if is_cuda:
+    print0(f"Peak memory usage: {peak_mem_mb:.2f}MiB")
+else:
+    print0("Peak memory usage: N/A (non-CUDA device)")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
@@ -382,7 +356,7 @@ get_report().log(section="Base model training", data=[
         "MFU %": f"{mfu:.2f}%",
         "Total training flops": f"{flops_so_far:e}",
         "Total training time": f"{total_training_time/60:.2f}m",
-        "Peak memory usage": f"{torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MiB",
+        "Peak memory usage": f"{peak_mem_mb:.2f}MiB" if peak_mem_mb is not None else "N/A",
     }
 ])
 

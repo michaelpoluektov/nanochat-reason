@@ -10,6 +10,7 @@ import torch
 from nanochat.common import compute_init
 from nanochat.engine import Engine
 from nanochat.checkpoint_manager import load_model
+from nanochat.device import get_autocast_kwargs
 
 parser = argparse.ArgumentParser(description="Chat with the model")
 parser.add_argument(
@@ -36,7 +37,7 @@ args = parser.parse_args()
 
 # Init the model and tokenizer
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
-autocast_ctx = torch.amp.autocast(device_type="mps", dtype=torch.bfloat16)
+autocast_ctx = torch.amp.autocast(**get_autocast_kwargs(device))
 model, tokenizer, meta = load_model(
     args.source, device, phase="eval", model_tag=args.model_tag, step=args.step
 )

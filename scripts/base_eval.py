@@ -23,6 +23,7 @@ from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir
 from nanochat.tokenizer import HuggingFaceTokenizer
 from nanochat.checkpoint_manager import load_model
 from nanochat.core_eval import evaluate_task
+from nanochat.device import get_autocast_kwargs
 
 # -----------------------------------------------------------------------------
 # nanoChat specific function dealing with I/O etc.
@@ -122,7 +123,7 @@ def main():
 
     # distributed / precision setup
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
-    autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=torch.bfloat16)
+    autocast_ctx = torch.amp.autocast(**get_autocast_kwargs(device))
 
     # Load model and tokenizer from command line or from file system
     if len(sys.argv) >= 2:

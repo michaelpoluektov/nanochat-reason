@@ -17,6 +17,7 @@ import torch.distributed as dist
 from nanochat.common import compute_init, compute_cleanup, get_dist_info, print0
 from nanochat.checkpoint_manager import load_model
 from nanochat.engine import Engine
+from nanochat.device import get_autocast_kwargs
 
 from tasks.humaneval import HumanEval
 from tasks.mmlu import MMLU
@@ -195,7 +196,8 @@ if __name__ == "__main__":
 
     ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
     ptdtype = torch.float32 if args.dtype == 'float32' else torch.bfloat16
-    autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=ptdtype)
+    autocast_kwargs = get_autocast_kwargs(device)
+    autocast_ctx = torch.amp.autocast(**{**autocast_kwargs, "dtype": ptdtype})
 
     model, tokenizer, meta = load_model(args.source, device, phase="eval", model_tag=args.model_tag, step=args.step)
     engine = Engine(model, tokenizer)

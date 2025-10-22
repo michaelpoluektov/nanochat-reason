@@ -3,10 +3,11 @@ from collections import deque
 import torch
 
 from nanochat.common import get_dist_info
+from nanochat.device import get_default_device, supports_non_blocking
 from nanochat.dataset import parquets_iter_batched
 from nanochat.tokenizer import get_tokenizer
 
-def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128):
+def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokenizer_batch_size=128, device=None):
     """Stream pretraining text from parquet files, tokenize, yield training batches."""
     assert split in ["train", "val"], "split must be 'train' or 'val'"
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
@@ -29,6 +30,8 @@ def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokeniz
     batches = document_batches()
 
     batch_index = 0
+    device = device or get_default_device()
+    can_non_block = supports_non_blocking(device)
     while True:
         # Accumulate enough tokens for one iteration before yielding.
         while len(token_buffer) < needed_tokens:
@@ -44,6 +47,6 @@ def tokenizing_distributed_data_loader(B, T, split, tokenizer_threads=4, tokeniz
         inputs_cpu = scratch[:-1].to(dtype=torch.int32)
         targets_cpu = scratch[1:]
         # Reshape to 2D and move to GPU async
-        inputs = inputs_cpu.view(B, T).to(device="cuda", dtype=torch.int32, non_blocking=True)
-        targets = targets_cpu.view(B, T).to(device="cuda", dtype=torch.int64, non_blocking=True)
+        inputs = inputs_cpu.view(B, T).to(device=device, dtype=torch.int32, non_blocking=can_non_block)
+        targets = targets_cpu.view(B, T).to(device=device, dtype=torch.int64, non_blocking=can_non_block)
         yield inputs, targets

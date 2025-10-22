@@ -26,20 +26,12 @@ from nanochat.checkpoint_manager import (
 )
 from nanochat.loss_eval import evaluate_bpb
 import torch.distributed as dist
+from nanochat.device import get_autocast_kwargs, supports_non_blocking
 
 from tasks.common import TaskMixture
 from tasks.gsm8k import GSM8K
 from tasks.mmlu import MMLU
 from tasks.smoltalk import SmolTalk
-
-from torchao.float8 import convert_to_float8_training, Float8LinearConfig
-
-
-def _env_flag(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 # -----------------------------------------------------------------------------
@@ -65,14 +57,13 @@ exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from 
 user_config = {k: globals()[k] for k in config_keys} # possibly useful for logging
 # -----------------------------------------------------------------------------
 
-use_fp8 = _env_flag("USE_FP8", True)
-fp8_recipe = "tensorwise" # "tensorwise", "rowwise", "rowwise_with_gw_hp"
-
 # Compute init
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
 master_process = ddp_rank == 0
 dtype = torch.float32 if dtype == 'float32' else torch.bfloat16
-autocast_ctx = torch.amp.autocast(device_type="cuda", dtype=dtype)
+autocast_kwargs = get_autocast_kwargs(device)
+autocast_ctx = torch.amp.autocast(**{**autocast_kwargs, "dtype": dtype})
+is_cuda = device.type == "cuda"
 
 # wandb logging init
 use_dummy_wandb = run == "dummy" or not master_process
@@ -84,21 +75,6 @@ pretrain_batch_size = meta.get("device_batch_size", None)
 if pretrain_batch_size is not None and device_batch_size > pretrain_batch_size:
     print0(f"FOOTGUN WARNING: base model training used device_batch_size {pretrain_batch_size}, did you pass in a good --device_batch_size to this script?")
 
-if use_fp8:
-    print0("Trying fp8")
-    def _fp8_module_filter_fn(mod, fqn: str):
-        if not isinstance(mod, torch.nn.Linear):
-            return False
-        if 'transformer.h' not in fqn: # only transformer blocks
-            return False
-        if 'lm_head' in fqn: # skip last head
-            return False
-        return (mod.in_features % 16 == 0) and (mod.out_features % 16 == 0)
-
-    config = Float8LinearConfig.from_recipe_name(fp8_recipe)
-    convert_to_float8_training(model, config=config, module_filter_fn=_fp8_module_filter_fn)
-    print0(f"Using torch/ao fp8 training recipe: '{fp8_recipe}'.")
-    
 orig_model = model
 
 model = torch.compile(model, dynamic=False)
@@ -149,6 +125,7 @@ def mid_data_generator(split):
     token_buffer = deque()
     scratch = torch.empty(needed_tokens, dtype=torch.int64, pin_memory=True)
     cursor = ddp_rank # increments by ddp_world_size each time, so each rank processes unique documents
+    non_blocking = supports_non_blocking(device)
     while True:
         # Accumulate enough tokens for one iteration before yielding
         while len(token_buffer) < needed_tokens:
@@ -165,8 +142,8 @@ def mid_data_generator(split):
             scratch[i] = token_buffer.popleft()
         inputs_cpu = scratch[:-1].to(dtype=torch.int32)
         targets_cpu = scratch[1:]
-        inputs = inputs_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int32, non_blocking=True)
-        targets = targets_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int64, non_blocking=True)
+        inputs = inputs_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int32, non_blocking=non_blocking)
+        targets = targets_cpu.view(device_batch_size, max_seq_len).to(device=device, dtype=torch.int64, non_blocking=non_blocking)
         if split == "train":
             approx_progress = cursor / dataset_size # approximate progress as a fraction of the dataset
         yield inputs, targets
@@ -258,7 +235,8 @@ while True:
     # -------------------------------------------------------------------------
     # single training step
     # evaluate the gradient
-    torch.cuda.synchronize()
+    if is_cuda:
+        torch.cuda.synchronize()
     t0 = time.time()
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
@@ -279,7 +257,8 @@ while True:
     for opt in optimizers:
         opt.step()
     model.zero_grad(set_to_none=True)
-    torch.cuda.synchronize()
+    if is_cuda:
+        torch.cuda.synchronize()
     t1 = time.time()
     dt = t1 - t0
     # -------------------------------------------------------------------------
@@ -311,7 +290,11 @@ while True:
         })
 
 # print a few more stats
-print0(f"Peak memory usage: {torch.cuda.max_memory_allocated() / 1024 / 1024:.2f}MiB")
+peak_mem_mb = (torch.cuda.max_memory_allocated() / 1024 / 1024) if is_cuda else None
+if is_cuda:
+    print0(f"Peak memory usage: {peak_mem_mb:.2f}MiB")
+else:
+    print0("Peak memory usage: N/A (non-CUDA device)")
 print0(f"Total training time: {total_training_time/60:.2f}m")
 print0(f"Minimum validation bpb: {min_val_bpb:.4f}")
 
