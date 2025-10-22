@@ -245,7 +245,7 @@ class Engine:
                         num_classes=vocab_size,
                     ).to(device=device, dtype=embed_dtype)
                 else:
-                    token_one_hot = F.softmax(logits[0], dim=0)
+                    token_one_hot = F.softmax(logits[0] / temperature, dim=0)
                 token_column.append(token_one_hot)
                 # Update the state of this row to include the next token
                 state.current_tokens.append(next_token)
