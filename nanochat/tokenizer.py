@@ -152,6 +152,9 @@ import pickle
 import rustbpe
 import tiktoken
 
+THINK_SPECIAL_TOKENS = {"<think>", "</think>"}
+
+
 class RustBPETokenizer:
     """Light wrapper around tiktoken (for efficient inference) but train with rustbpe"""
 
@@ -222,14 +225,26 @@ class RustBPETokenizer:
         if append is not None:
             append_id = append if isinstance(append, int) else self.encode_special(append)
 
+        allowed_special = THINK_SPECIAL_TOKENS & self.enc.special_tokens_set
+
         if isinstance(text, str):
-            ids = self.enc.encode_ordinary(text)
+            if allowed_special:
+                ids = self.enc.encode(text, allowed_special=allowed_special)
+            else:
+                ids = self.enc.encode_ordinary(text)
             if prepend is not None:
                 ids.insert(0, prepend_id) # TODO: slightly inefficient here? :( hmm
             if append is not None:
                 ids.append(append_id)
         elif isinstance(text, list):
-            ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
+            if allowed_special:
+                ids = self.enc.encode_batch(
+                    text,
+                    allowed_special=allowed_special,
+                    num_threads=num_threads,
+                )
+            else:
+                ids = self.enc.encode_ordinary_batch(text, num_threads=num_threads)
             if prepend is not None:
                 for ids_row in ids:
                     ids_row.insert(0, prepend_id) # TODO: same

@@ -87,12 +87,28 @@ TOKENIZER_DIR="$NANOCHAT_BASE_DIR/tokenizer"
 CHECKPOINT_DIR="$NANOCHAT_BASE_DIR/chatsft_checkpoints/d32"
 mkdir -p "$TOKENIZER_DIR" "$CHECKPOINT_DIR"
 
+TOKENIZER_DATA_DIR="$NANOCHAT_BASE_DIR/base_data"
+if ! compgen -G "$TOKENIZER_DATA_DIR"/*.parquet >/dev/null 2>&1; then
+    echo "Tokenizer training shards not found under $TOKENIZER_DATA_DIR." >&2
+    echo "Download them with 'python -m nanochat.dataset -n <num_shards>' before running this script." >&2
+    exit 1
+fi
+
 cp "$HF_LOCAL_DIR/tokenizer.pkl" "$TOKENIZER_DIR/tokenizer.pkl"
 cp "$HF_LOCAL_DIR/token_bytes.pt" "$TOKENIZER_DIR/token_bytes.pt"
 cp "$HF_LOCAL_DIR/meta_${HF_MODEL_STEP}.json" "$CHECKPOINT_DIR/meta_${HF_MODEL_STEP}.json"
 cp "$HF_LOCAL_DIR/model_${HF_MODEL_STEP}.pt" "$CHECKPOINT_DIR/model_${HF_MODEL_STEP}.pt"
 
+python scripts/ensure_think_tokens.py \
+    --tokenizer-dir "$TOKENIZER_DIR" \
+    --data-dir "$TOKENIZER_DATA_DIR" \
+    --max-chars 200000000
+
 echo "✅ Downloaded SFT checkpoint (step ${HF_MODEL_STEP}) and placed it under $NANOCHAT_BASE_DIR"
+
+python scripts/gsm8k_token_length_stats.py \
+    --dataset "$TARGET_DATASET_PATH" \
+    --tokenizer-dir "$TOKENIZER_DIR"
 
 # -----------------------------------------------------------------------------
 # Reset report so the RL pretrain run is tracked cleanly.
