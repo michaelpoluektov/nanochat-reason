@@ -8,7 +8,7 @@ import json
 import logging
 import torch
 from dataclasses import dataclass
-from typing import List, Optional, Sequence
+from typing import Optional, Sequence
 
 from nanochat.common import get_base_dir
 from nanochat.gpt import GPT, GPTConfig
@@ -36,7 +36,7 @@ def _env_flag(name: str, default: bool = False) -> bool:
         return default
     return value.lower() in {"1", "true", "yes", "on"}
 
-def _split_env_list(value: str) -> Optional[List[str]]:
+def _split_env_list(value: str) -> Optional[list[str]]:
     if not value:
         return None
     items = [part.strip() for part in value.split(",")]
@@ -237,9 +237,9 @@ def upload_model_to_hf(
         Target branch or revision on the Hub. Defaults to the repository's default branch.
     commit_message : str, optional
         Custom commit message for the upload.
-    allow_patterns : Union[str, List[str]], optional
+    allow_patterns : Union[str, list[str]], optional
         Glob patterns selecting which files to upload. Defaults to the chosen checkpoint files.
-    ignore_patterns : Union[str, List[str]], optional
+    ignore_patterns : Union[str, list[str]], optional
         Glob patterns for files that should be ignored during the upload.
     create_pr : bool, optional
         Whether to open a pull request instead of committing directly.

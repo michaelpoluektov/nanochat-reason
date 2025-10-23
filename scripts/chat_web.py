@@ -42,7 +42,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
 from pydantic import BaseModel
-from typing import List, Optional, AsyncGenerator
+from typing import Optional, AsyncGenerator
 from dataclasses import dataclass
 
 from nanochat.common import compute_init
@@ -104,7 +104,7 @@ class WorkerPool:
         self.num_gpus = num_gpus if num_gpus is not None else available
         if self.base_device.type != "cuda" and self.num_gpus > 1:
             raise ValueError(f"Requested {self.num_gpus} devices but only one '{self.base_device.type}' device is available")
-        self.workers: List[Worker] = []
+        self.workers: list[Worker] = []
         self.available_workers: asyncio.Queue = asyncio.Queue()
 
     async def initialize(self, source: str, model_tag: Optional[str] = None, step: Optional[int] = None):
@@ -149,7 +149,7 @@ class ChatMessage(BaseModel):
     content: str
 
 class ChatRequest(BaseModel):
-    messages: List[ChatMessage]
+    messages: list[ChatMessage]
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     top_k: Optional[int] = None
