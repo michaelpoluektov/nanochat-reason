@@ -5,19 +5,17 @@
 
 set -euo pipefail
 
-export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
-export NANOCHAT_BASE_DIR="${NANOCHAT_BASE_DIR:-$HOME/.cache/nanochat}"
+export OMP_NUM_THREADS=1
+export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 mkdir -p "$NANOCHAT_BASE_DIR"
 
-HF_MODEL_REPO="${HF_MODEL_REPO:-karpathy/nanochat-d32}"
-HF_MODEL_STEP="${HF_MODEL_STEP:-000650}"
-HF_MODEL_FILES=("tokenizer.pkl" "token_bytes.pt" "meta_${HF_MODEL_STEP}.json" "model_${HF_MODEL_STEP}.pt")
-HF_LOCAL_DIR="${HF_LOCAL_DIR:-$NANOCHAT_BASE_DIR/downloads/nanochat-d32}"
+HF_MODEL_STEP="000650"
+HF_LOCAL_DIR="$NANOCHAT_BASE_DIR/downloads/nanochat-d32"
 mkdir -p "$HF_LOCAL_DIR"
 
-HF_DATASET_REPO="${HF_DATASET_REPO:-LazyAGI/GSM8K_Deepseek_R1_Distill-Data-7148}"
-HF_DATASET_FILE="${HF_DATASET_FILE:-gsm8k_deepseek_R1_7148.json}"
-DATASET_DIR="${DATASET_DIR:-$NANOCHAT_BASE_DIR/datasets/gsm8k_deepseek}"
+HF_DATASET_REPO="LazyAGI/GSM8K_Deepseek_R1_Distill-Data-7148"
+HF_DATASET_FILE="gsm8k_deepseek_R1_7148.json"
+DATASET_DIR="$NANOCHAT_BASE_DIR/datasets/gsm8k_deepseek"
 mkdir -p "$DATASET_DIR"
 
 # Require Hugging Face upload target so the run fails fast if uploading is misconfigured.
@@ -37,9 +35,7 @@ source .venv/bin/activate
 # -----------------------------------------------------------------------------
 # Optional wandb logging (defaults to 'rl-pretrain' so you can override or disable with WANDB_RUN=dummy)
 
-if [ -z "${WANDB_RUN:-}" ]; then
-    WANDB_RUN="rl-pretrain"
-fi
+WANDB_RUN="rl-pretrain"
 export WANDB_RUN
 
 # -----------------------------------------------------------------------------
@@ -47,14 +43,11 @@ export WANDB_RUN
 
 command -v huggingface-cli >/dev/null 2>&1 || { echo "huggingface-cli not found. Ensure huggingface-hub is installed."; exit 1; }
 
-INCLUDE_PATTERNS=$(printf "%s," "${HF_MODEL_FILES[@]}")
-INCLUDE_PATTERNS="${INCLUDE_PATTERNS%,}"
-
-huggingface-cli download "$HF_MODEL_REPO" \
+huggingface-cli download "karpathy/nanochat-d32" \
     --repo-type=model \
     --local-dir "$HF_LOCAL_DIR" \
     --local-dir-use-symlinks False \
-    --include "$INCLUDE_PATTERNS"
+    --include "tokenizer.pkl,token_bytes.pt,meta_${HF_MODEL_STEP}.json,model_${HF_MODEL_STEP}.pt"
 
 if [ -n "$HF_DATASET_FILE" ]; then
     huggingface-cli download "$HF_DATASET_REPO" \
@@ -113,7 +106,7 @@ python -m nanochat.report reset
 # -----------------------------------------------------------------------------
 # Run RL pretraining (defaults to 1 process, override via NPROC_PER_NODE=8 if you have more GPUs).
 
-NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
+NPROC_PER_NODE=1
 if [ "$NPROC_PER_NODE" -gt 1 ]; then
     torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.chat_rl_pretrain -- --run="$WANDB_RUN"
 else
