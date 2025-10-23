@@ -13,7 +13,7 @@ import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import random
-from typing import Iterable, List, Tuple
+from typing import Iterable
 
 import torch
 import torch.distributed as dist
@@ -116,11 +116,11 @@ val_ds = GSM8KDeepSeekR1(
     seed=data_seed,
 )
 
-def build_data_iterator(dataset, batch_size, *, shuffle) -> Iterable[Tuple[torch.Tensor, torch.Tensor]]:
+def build_data_iterator(dataset, batch_size, *, shuffle) -> Iterable[tuple[torch.Tensor, torch.Tensor]]:
     pad_token_id = tokenizer.encode_special("<|assistant_end|>")
     rng = random.Random(data_seed + ddp_rank + (1337 if shuffle else 0))
 
-    def collate(rows: List[Tuple[List[int], List[int]]]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def collate(rows: list[tuple[list[int], list[int]]]) -> tuple[torch.Tensor, torch.Tensor]:
         nrows = len(rows)
         ncols = max(len(ids) for ids, _ in rows) - 1
         inputs = torch.full((nrows, ncols), pad_token_id, dtype=torch.long)
