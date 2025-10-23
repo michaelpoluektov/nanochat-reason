@@ -99,7 +99,7 @@ def sft_data_generator(dataset, batch_size):
     # prepares a list of tokenized conversations into a batch and yields
     def collate_and_yield(batch):
         nrows = len(batch)
-        ncols = max(len(ids) for ids, mask in batch) - 1 # seq of n creates inputs/targets of n-1
+        ncols = max(len(ids) for ids, _ in batch) - 1 # seq of n creates inputs/targets of n-1
         inputs = torch.full((nrows, ncols), pad_token_id, dtype=torch.long)
         targets = torch.full((nrows, ncols), -1, dtype=torch.long) # -1 is ignore index
         for i, (ids, mask) in enumerate(batch):
