@@ -256,22 +256,19 @@ class GPT(nn.Module):
                 group["initial_lr"] = group["lr"]
         return optimizers
 
-    def forward(self, inputs_one_hot, targets=None, kv_cache=None, loss_reduction='mean'):
-        embedding_weight = self.transformer.wte.weight
-        one_hot = inputs_one_hot.to(device=embedding_weight.device, dtype=embedding_weight.dtype)
-        B, T, V = one_hot.size()
-        assert V == embedding_weight.size(0), "One-hot vocab dimension mismatch"
+    def forward(self, idx, targets=None, kv_cache=None, loss_reduction='mean'):
+        B, T = idx.size()
 
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
-        assert one_hot.device == self.cos.device, f"Rotary embeddings and inputs are on different devices: {one_hot.device} != {self.cos.device}"
+        assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
         assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
 
         # Forward the trunk of the Transformer
-        x = torch.matmul(one_hot, embedding_weight)
+        x = self.transformer.wte(idx)
         x = norm(x)
         for block in self.transformer.h:
             x = block(x, cos_sin, kv_cache)
@@ -308,23 +305,18 @@ class GPT(nn.Module):
             rng = torch.Generator(device=device)
             rng.manual_seed(seed)
         ids = torch.tensor([tokens], dtype=torch.long, device=device) # add batch dim
-        vocab_size = self.config.vocab_size
-        embed_dtype = self.transformer.wte.weight.dtype
-        one_hot_ids = F.one_hot(ids, num_classes=vocab_size).to(dtype=embed_dtype, device=device)
         for _ in range(max_tokens):
-            logits = self.forward(one_hot_ids) # (B, T, vocab_size)
+            logits = self.forward(ids) # (B, T, vocab_size)
             logits = logits[:, -1, :] # (B, vocab_size)
-            # if top_k is not None:
-            #     v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-            #     logits[logits < v[:, [-1]]] = -float('Inf')
-            # if temperature > 0:
-            logits = logits / temperature
-            probs = F.softmax(logits, dim=-1)
-            #     next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
-            # else:
-            next_ids = torch.argmax(logits, dim=-1, keepdim=True)
-            # ids = torch.cat((ids, next_ids), dim=1)
-            # next_one_hot = F.one_hot(next_ids, num_classes=vocab_size).to(dtype=embed_dtype, device=device)
-            one_hot_ids = torch.cat((one_hot_ids, probs), dim=1)
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+            if temperature > 0:
+                logits = logits / temperature
+                probs = F.softmax(logits, dim=-1)
+                next_ids = torch.multinomial(probs, num_samples=1, generator=rng)
+            else:
+                next_ids = torch.argmax(logits, dim=-1, keepdim=True)
+            ids = torch.cat((ids, next_ids), dim=1)
             token = next_ids.item()
             yield token
