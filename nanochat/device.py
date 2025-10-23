@@ -17,7 +17,9 @@ def get_default_device() -> torch.device:
     The result is cached so callers can reuse the same torch.device instance.
     """
     if torch.cuda.is_available():
-        return torch.device("cuda")
+        # Always return a CUDA device with an explicit index (default 0) so
+        # downstream torch.cuda.set_device() calls receive a fully qualified device.
+        return torch.device("cuda", torch.cuda.current_device() if torch.cuda.device_count() > 0 else 0)
     if _mps_is_available():
         return torch.device("mps")
     return torch.device("cpu")

@@ -44,7 +44,7 @@ step = None  # optional step number
 data_path = None  # defaults to ~/.cache/nanochat/datasets/gsm8k_deepseek/gsm8k_deepseek_R1_7148.json
 val_fraction = 0.05
 data_seed = 42
-max_tokens = 2048  # truncate rendered conversations to this many tokens
+max_tokens = 4096  # truncate rendered conversations to this many tokens
 
 # Optimization / training loop
 dtype = "bfloat16"

@@ -2,6 +2,16 @@
 
 ![nanochat logo](dev/nanochat.png)
 
+## Reasoning TODO
+
+- Add `<think>` and `</think>` to tokenizer properly
+- Count tokens in dataset to determine max sequence length
+- Change `chat_rl.py` and the GSM8K dataset to use the `\boxed{}` format
+- Evaluate before and after RL pretraining
+- Add the latent stuff
+
+## The rest of the README
+
 > The best ChatGPT that $100 can buy.
 
 This repo is a full-stack implementation of an LLM like ChatGPT in a single, clean, minimal, hackable, dependency-lite codebase. nanochat is designed to run on a single 8XH100 node via scripts like [speedrun.sh](speedrun.sh), that run the entire pipeline start to end. This includes tokenization, pretraining, finetuning, evaluation, inference, and web serving over a simple UI so that you can talk to your own LLM just like ChatGPT. nanochat will become the capstone project of the course LLM101n being developed by Eureka Labs.

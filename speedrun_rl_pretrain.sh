@@ -43,23 +43,19 @@ export WANDB_RUN
 
 command -v huggingface-cli >/dev/null 2>&1 || { echo "huggingface-cli not found. Ensure huggingface-hub is installed."; exit 1; }
 
-huggingface-cli download "karpathy/nanochat-d32" \
+hf download "karpathy/nanochat-d32" \
     --repo-type=model \
-    --local-dir "$HF_LOCAL_DIR" \
-    --local-dir-use-symlinks False \
-    --include "tokenizer.pkl,token_bytes.pt,meta_${HF_MODEL_STEP}.json,model_${HF_MODEL_STEP}.pt"
+    --local-dir "$HF_LOCAL_DIR"
 
 if [ -n "$HF_DATASET_FILE" ]; then
-    huggingface-cli download "$HF_DATASET_REPO" \
+    hf  download "$HF_DATASET_REPO" \
         --repo-type=dataset \
         --local-dir "$DATASET_DIR" \
-        --local-dir-use-symlinks False \
         --include "$HF_DATASET_FILE"
 else
-    huggingface-cli download "$HF_DATASET_REPO" \
+    hf download "$HF_DATASET_REPO" \
         --repo-type=dataset \
-        --local-dir "$DATASET_DIR" \
-        --local-dir-use-symlinks False
+        --local-dir "$DATASET_DIR"
 fi
 
 TARGET_DATASET_PATH="$DATASET_DIR/$HF_DATASET_FILE"
@@ -110,7 +106,7 @@ NPROC_PER_NODE=1
 if [ "$NPROC_PER_NODE" -gt 1 ]; then
     torchrun --standalone --nproc_per_node="$NPROC_PER_NODE" -m scripts.chat_rl_pretrain -- --run="$WANDB_RUN"
 else
-    python -m scripts.chat_rl_pretrain -- --run="$WANDB_RUN"
+    python -m scripts.chat_rl_pretrain --run="$WANDB_RUN"
 fi
 
 # -----------------------------------------------------------------------------
