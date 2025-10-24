@@ -19,19 +19,21 @@ from datasets import load_dataset
 from tasks.common import Task
 
 
+BOXED_RE = re.compile(r"\\boxed\s*{([^{}]+)}")
 GSM_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
+
+
 def extract_answer(completion):
     """
-    Extract the numerical answer after #### marker.
-    Follows official code for normalization:
-    https://github.com/openai/grade-school-math/blob/3101c7d5072418e28b9008a6636bde82a006892c/grade_school_math/dataset.py#L28
+    Extract the numerical answer from a ``\boxed{...}`` span. Returns ``None``
+    when no boxed answer is present.
     """
-    match = GSM_RE.search(completion)
-    if match:
-        match_str = match.group(1).strip()
-        match_str = match_str.replace(",", "")
-        return match_str
-    return None
+    match = BOXED_RE.search(completion)
+    if not match:
+        return None
+    match_str = match.group(1).strip()
+    match_str = match_str.replace(",", "")
+    return match_str
 
 
 class GSM8K(Task):
@@ -74,6 +76,18 @@ class GSM8K(Task):
             else:
                 # Regular text in between tool calls
                 assistant_message_parts.append({"type": "text", "text": part})
+        # Convert the final answer marker to the \boxed{} convention used by RL.
+        if assistant_message_parts and assistant_message_parts[-1]["type"] == "text":
+            last_text = assistant_message_parts[-1]["text"]
+            match = GSM_RE.search(last_text)
+            if match:
+                answer_str = match.group(1).strip()
+                before = last_text[:match.start()]
+                after = last_text[match.end():]
+                assistant_message_parts[-1] = {
+                    "type": "text",
+                    "text": f"{before}\\boxed{{{answer_str}}}{after}",
+                }
         # No put it all together
         messages = [
             {"role": "user", "content": question}, # note: simple string
@@ -103,6 +117,8 @@ class GSM8K(Task):
         # Extract both the ground truth answer and the predicted answer
         ref_num = extract_answer(last_text_part)
         pred_num = extract_answer(assistant_response)
+        if ref_num is None or pred_num is None:
+            return 0
         # Compare and return the success as int
         is_correct = int(pred_num == ref_num)
         return is_correct
