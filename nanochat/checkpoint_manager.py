@@ -27,6 +27,7 @@ MODEL_SOURCE_DIRS = {
     "base": "base_checkpoints",
     "mid": "mid_checkpoints",
     "sft": "chatsft_checkpoints",
+    "prerl": "chatrl_pretrain_checkpoints",
     "rl": "chatrl_checkpoints",
 }
 

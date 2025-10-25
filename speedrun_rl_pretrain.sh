@@ -88,9 +88,17 @@ CHECKPOINT_DIR="$NANOCHAT_BASE_DIR/chatsft_checkpoints/d32"
 mkdir -p "$TOKENIZER_DIR" "$CHECKPOINT_DIR"
 
 TOKENIZER_DATA_DIR="$NANOCHAT_BASE_DIR/base_data"
+TOKENIZER_DATASET_SHARDS="${TOKENIZER_DATASET_SHARDS:-8}"
 if ! compgen -G "$TOKENIZER_DATA_DIR"/*.parquet >/dev/null 2>&1; then
     echo "Tokenizer training shards not found under $TOKENIZER_DATA_DIR." >&2
-    echo "Download them with 'python -m nanochat.dataset -n <num_shards>' before running this script." >&2
+    echo "Downloading $TOKENIZER_DATASET_SHARDS shard(s) with python -m nanochat.dataset..." >&2
+    python -m nanochat.dataset -n "$TOKENIZER_DATASET_SHARDS"
+fi
+
+if ! compgen -G "$TOKENIZER_DATA_DIR"/*.parquet >/dev/null 2>&1; then
+    echo "Failed to locate tokenizer training shards under $TOKENIZER_DATA_DIR after download attempt." >&2
+    echo "Ensure the machine has internet access or pre-download the shards manually with" >&2
+    echo "  python -m nanochat.dataset -n <num_shards>" >&2
     exit 1
 fi
 

@@ -251,7 +251,8 @@ for step_idx in range(num_iterations):
         depth = model.config.n_layer
         model_tag_out = f"d{depth}"
         base_dir = get_base_dir()
-        checkpoint_dir = os.path.join(base_dir, "chatrl_pretrain_checkpoints", model_tag_out)
+        checkpoints_root = os.path.join(base_dir, "chatrl_pretrain_checkpoints")
+        checkpoint_dir = os.path.join(checkpoints_root, model_tag_out)
         os.makedirs(checkpoint_dir, exist_ok=True)
         meta_payload = {
             "step": step_idx + 1,
@@ -268,7 +269,7 @@ for step_idx in range(num_iterations):
         )
         print0(f"✅ Saved model checkpoint to {checkpoint_dir}")
         maybe_upload_checkpoint(
-            checkpoint_dir,
+            checkpoints_root,
             model_tag=model_tag_out,
             step=step_idx + 1,
             config=hf_upload,
@@ -280,7 +281,8 @@ if master_process and (save_every == 0 or (num_iterations % save_every) != 0):
     depth = model.config.n_layer
     model_tag_out = f"d{depth}"
     base_dir = get_base_dir()
-    checkpoint_dir = os.path.join(base_dir, "chatrl_pretrain_checkpoints", model_tag_out)
+    checkpoints_root = os.path.join(base_dir, "chatrl_pretrain_checkpoints")
+    checkpoint_dir = os.path.join(checkpoints_root, model_tag_out)
     os.makedirs(checkpoint_dir, exist_ok=True)
     meta_payload = {
         "step": num_iterations,
@@ -297,7 +299,7 @@ if master_process and (save_every == 0 or (num_iterations % save_every) != 0):
     )
     print0(f"✅ Saved model checkpoint to {checkpoint_dir}")
     maybe_upload_checkpoint(
-        checkpoint_dir,
+        checkpoints_root,
         model_tag=model_tag_out,
         step=num_iterations,
         config=hf_upload,
