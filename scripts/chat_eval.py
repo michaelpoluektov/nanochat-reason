@@ -8,6 +8,7 @@ python -m scripts.chat_eval -a ARC-Easy
 torchrun --nproc_per_node=8 -m scripts.chat_eval -- -a ARC-Easy
 """
 
+import re
 import argparse
 from functools import partial
 
@@ -25,6 +26,21 @@ from tasks.arc import ARC
 from tasks.gsm8k import GSM8K
 
 # -----------------------------------------------------------------------------
+# Formatting helpers for generative evaluations
+
+FORMAT_BOXED_RE = re.compile(r"\\boxed\s*{[^{}]+}")
+
+
+def completion_has_think_markers(text: str) -> bool:
+    """Return True if both <think> and </think> markers appear in the completion."""
+    return "<think>" in text and "</think>" in text
+
+
+def completion_has_boxed_answer(text: str) -> bool:
+    """Return True if the completion includes a \\boxed{} span."""
+    return bool(FORMAT_BOXED_RE.search(text))
+
+# -----------------------------------------------------------------------------
 # Generative evaluation loop (we go one problem at a time, sample, evaluate)
 
 def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_new_tokens, temperature, top_k, max_problems=None):
@@ -35,6 +51,13 @@ def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
 
     # Run the evaluation
+    format_counts = {
+        "total": 0,
+        "think": 0,
+        "boxed": 0,
+        "both": 0,
+    }
+    correct_format_records = []
     num_passed, total = 0, 0
     for i in range(ddp_rank, num_problems, ddp_world_size):
         conversation = task_object[i]
@@ -55,6 +78,17 @@ def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_
         # Evaluate success criteria
         outcomes = [task_object.evaluate(conversation, completion) for completion in completions]
         passed = any(outcomes)
+
+        # Track formatting coverage per completion
+        for sample_idx, completion in enumerate(completions):
+            has_think = completion_has_think_markers(completion)
+            has_box = completion_has_boxed_answer(completion)
+            format_counts["total"] += 1
+            format_counts["think"] += int(has_think)
+            format_counts["boxed"] += int(has_box)
+            format_counts["both"] += int(has_think and has_box)
+            if has_think and has_box:
+                correct_format_records.append((i, sample_idx))
 
         # Keep stats
         total += 1
@@ -78,8 +112,50 @@ def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_
     print0("=" * 50)
     print0(f"Final: {num_passed}/{total} ({100*num_passed/total:.2f}%)")
 
-    # Return the accuracy
-    return num_passed/total
+    # Gather and log completions that followed the desired format
+    if correct_format_records:
+        prefix = f"[FORMAT] Rank {ddp_rank}"
+        for problem_idx, sample_idx in correct_format_records:
+            print(f"{prefix} | Problem {problem_idx} sample {sample_idx}: ✅ contains <think>...</think> and \\boxed{{}} answer", flush=True)
+
+    # Aggregate formatting statistics across all ranks
+    fmt_tensor = torch.tensor(
+        [
+            format_counts["think"],
+            format_counts["boxed"],
+            format_counts["both"],
+            format_counts["total"],
+        ],
+        dtype=torch.long,
+        device=device,
+    )
+    if ddp:
+        dist.all_reduce(fmt_tensor, op=dist.ReduceOp.SUM)
+    think_total, boxed_total, both_total, total_completions = fmt_tensor.tolist()
+    if total_completions > 0:
+        think_ratio = think_total / total_completions
+        boxed_ratio = boxed_total / total_completions
+        both_ratio = both_total / total_completions
+    else:
+        think_ratio = boxed_ratio = both_ratio = 0.0
+    print0(
+        f"Format coverage: <think> tags {think_total}/{total_completions} ({100*think_ratio:.2f}%), "
+        f"\\boxed{{}} answers {boxed_total}/{total_completions} ({100*boxed_ratio:.2f}%), "
+        f"both {both_total}/{total_completions} ({100*both_ratio:.2f}%)"
+    )
+
+    format_metrics = {
+        "total_completions": total_completions,
+        "think_tagged": think_total,
+        "boxed_answer": boxed_total,
+        "both_present": both_total,
+        "think_tagged_ratio": think_ratio,
+        "boxed_answer_ratio": boxed_ratio,
+        "both_present_ratio": both_ratio,
+    }
+
+    # Return the accuracy together with formatting metrics
+    return num_passed/total, format_metrics
 
 # -----------------------------------------------------------------------------
 # Categorical evaluation loop
@@ -169,12 +245,23 @@ def run_chat_eval(task_name, model, tokenizer, engine,
     task_object = task_module()
     # Run the evaluation
     if task_object.eval_type == 'generative':
-        acc = run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_new_tokens, temperature, top_k, max_problems=max_problems)
+        acc, format_metrics = run_generative_eval(
+            task_object,
+            tokenizer,
+            model,
+            engine,
+            num_samples,
+            max_new_tokens,
+            temperature,
+            top_k,
+            max_problems=max_problems,
+        )
     elif task_object.eval_type == 'categorical':
         acc = run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems=max_problems)
+        format_metrics = None
     else:
         raise ValueError(f"Unsupported task evaluation type: {task_object.eval_type}")
-    return acc
+    return acc, format_metrics
 
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -215,9 +302,10 @@ if __name__ == "__main__":
 
     # Run all the task evaluations sequentially
     results = {}
+    format_metrics_by_task = {}
     for task_name in task_names:
         with autocast_ctx:
-            acc = run_chat_eval(
+            acc, format_metrics = run_chat_eval(
                 task_name,
                 model, tokenizer, engine,
                 batch_size=args.batch_size,
@@ -229,6 +317,8 @@ if __name__ == "__main__":
             )
             results[task_name] = acc
             print0(f"{task_name} accuracy: {100 * acc:.2f}%")
+            if format_metrics is not None:
+                format_metrics_by_task[task_name] = format_metrics
 
     # Log to report
     from nanochat.report import get_report
@@ -244,10 +334,13 @@ if __name__ == "__main__":
             centered_mean += centered_acc
         chatcore_metric = centered_mean / len(results)
         chatcore_metric_dict = {"ChatCORE metric": chatcore_metric}
-    get_report().log(section="Chat evaluation " + args.source, data=[
+    payload = [
         vars(args), # CLI args
         results,
         chatcore_metric_dict,
-    ])
+    ]
+    if format_metrics_by_task:
+        payload.append({"format_metrics": format_metrics_by_task})
+    get_report().log(section="Chat evaluation " + args.source, data=payload)
 
     compute_cleanup()

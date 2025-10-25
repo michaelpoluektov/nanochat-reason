@@ -197,8 +197,8 @@ for step in range(num_iterations):
         metrics = {}
         with torch.no_grad(), autocast_ctx:
             # note that because these are inside no_grad, we can usually afford to at least ~2X the batch size
-            metrics["mmlu_acc"] = run_chat_eval("MMLU", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
-            metrics["arc_easy_acc"] = run_chat_eval("ARC-Easy", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
+            metrics["mmlu_acc"], _ = run_chat_eval("MMLU", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
+            metrics["arc_easy_acc"], _ = run_chat_eval("ARC-Easy", model, tokenizer, engine, batch_size=device_batch_size*2, max_problems=1024)
         metrics_str = ', '.join(f'{k}: {v:.6f}' for k, v in metrics.items())
         print0(f"Step {step:05d} | {metrics_str}")
         wandb_run.log({
