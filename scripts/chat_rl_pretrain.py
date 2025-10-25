@@ -44,7 +44,7 @@ step = None  # optional step number
 data_path = None  # defaults to ~/.cache/nanochat/datasets/gsm8k_deepseek/gsm8k_deepseek_R1_7148.json
 val_fraction = 0.05
 data_seed = 42
-max_tokens = 4096  # truncate rendered conversations to this many tokens
+max_tokens = 2048  # truncate rendered conversations to this many tokens
 
 # Optimization / training loop
 dtype = "bfloat16"
@@ -144,13 +144,22 @@ def build_data_iterator(dataset, batch_size, *, shuffle) -> Iterable[tuple[torch
             )
         if shuffle:
             rng.shuffle(indices)
-        batch = []
+        batch: list[tuple[list[int], list[int]]] = []
+        samples_used = False
         for idx in indices:
-            ids, mask = tokenizer.render_conversation(dataset[idx], max_tokens=max_tokens)
+            ids, mask = tokenizer.render_conversation(dataset[idx], max_tokens=max_tokens + 1)
+            if len(ids) > max_tokens:
+                continue  # skip conversations that exceed the model context window
+            samples_used = True
             batch.append((ids, mask))
             if len(batch) == batch_size:
                 yield collate(batch)
                 batch = []
+        if not samples_used:
+            raise RuntimeError(
+                f"All samples exceeded the max sequence length ({max_tokens}) "
+                f"for rank {ddp_rank}. Consider increasing max_tokens or filtering the dataset."
+            )
 
 train_iter = iter(build_data_iterator(train_ds, device_batch_size, shuffle=True))
 def make_val_iter():
