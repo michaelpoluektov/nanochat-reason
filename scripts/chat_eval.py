@@ -33,7 +33,7 @@ FORMAT_BOXED_RE = re.compile(r"\\boxed\s*{[^{}]+}")
 
 def completion_has_think_markers(text: str) -> bool:
     """Return True if both <think> and </think> markers appear in the completion."""
-    return "<think>" in text and "</think>" in text
+    return "<think>" in text or "</think>" in text
 
 
 def completion_has_boxed_answer(text: str) -> bool:
@@ -45,7 +45,7 @@ def completion_has_boxed_answer(text: str) -> bool:
 
 def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_new_tokens, temperature, top_k, max_problems=None):
 
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
+    ddp, ddp_rank, _, ddp_world_size = get_dist_info()
     device = model.get_device()
 
     num_problems = len(task_object) if max_problems is None else min(len(task_object), max_problems)
@@ -164,7 +164,7 @@ def run_generative_eval(task_object, tokenizer, model, engine, num_samples, max_
 
 def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems=None):
 
-    ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
+    ddp, ddp_rank, _, ddp_world_size = get_dist_info()
     device = model.get_device()
     bos = tokenizer.get_bos_token_id() # use BOS as pad token is ok, these positions are ignored
 
@@ -200,7 +200,7 @@ def run_categorical_eval(task_object, tokenizer, model, batch_size, max_problems
             letters = conversation['letters']
             letter_ids = []
             for letter in letters:
-                if not letter in letter_to_id_cache:
+                if letter not in letter_to_id_cache:
                     encoded_letter = tokenizer.encode(letter)
                     assert len(encoded_letter) == 1, "Each letter must be a single token"
                     letter_to_id_cache[letter] = encoded_letter[0]
