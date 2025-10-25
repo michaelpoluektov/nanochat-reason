@@ -134,6 +134,18 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Evaluate the pretraining checkpoint on GSM8K (test split, pass@k style settings from chat_rl.py).
+
+python -m scripts.chat_eval \
+    -i prerl \
+    -a GSM8K \
+    --num-samples 8 \
+    --max-new-tokens 256 \
+    --temperature 1.0 \
+    --top-k 50 \
+    --max-problems 400
+
+# -----------------------------------------------------------------------------
 # Generate final report markdown for convenience.
 
 python -m nanochat.report generate
