@@ -56,9 +56,6 @@ class GSM8K(Task):
         row = self.ds[index]
         question = row['question'] # string of the question prompt
         answer = row['answer'] # string of the full solution and the answer after #### marker
-        instruction = "Please reason step by step, and put your final answer within \\boxed{}."
-        if instruction not in question:
-            question = question.rstrip() + "\n\n" + instruction
         # Create and return the Conversation object
         # This is tricky because GSM8K uses tool calls, which we need to parse here.
         assistant_message_parts = []
