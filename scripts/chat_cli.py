@@ -74,7 +74,7 @@ while True:
     conversation_tokens.append(assistant_start)
     generate_kwargs = {
         "num_samples": 1,
-        "max_tokens": 256,
+        "max_tokens": 2048,
         "temperature": args.temperature,
         "top_k": args.top_k,
     }

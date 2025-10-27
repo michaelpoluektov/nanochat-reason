@@ -139,11 +139,11 @@ fi
 python -m scripts.chat_eval \
     -i prerl \
     -a GSM8K \
-    --num-samples 8 \
-    --max-new-tokens 256 \
+    --num-samples 32 \
+    --max-new-tokens 2048 \
     --temperature 1.0 \
     --top-k 50 \
-    --max-problems 400
+    --max-problems 100
 
 # -----------------------------------------------------------------------------
 # Generate final report markdown for convenience.
