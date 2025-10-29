@@ -16,22 +16,30 @@ python -m scripts.chat_rl
 torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=default
 """
 
-import os
 import itertools
-import wandb
+import os
+
 import torch
 import torch.distributed as dist
+import wandb
 
-from nanochat.common import compute_init, compute_cleanup, print0, get_base_dir, DummyWandb
 from nanochat.checkpoint_manager import (
-    save_checkpoint,
-    load_model,
     get_hf_upload_config_from_env,
+    load_model,
     maybe_upload_checkpoint,
+    save_checkpoint,
 )
-from nanochat.engine import Engine
-from tasks.gsm8k import GSM8K
+from nanochat.common import (
+    DummyWandb,
+    compute_cleanup,
+    compute_init,
+    get_base_dir,
+    print0,
+)
 from nanochat.device import get_autocast_kwargs
+from nanochat.engine import Engine
+from nanochat.report import get_report
+from tasks.gsm8k import GSM8K
 
 # RL hyperparameters
 run = os.environ.get("WANDB_RUN") # wandb run name
@@ -41,7 +49,7 @@ dtype = "bfloat16"
 device_batch_size = 8 # no forward pass will go above this to not OOM
 examples_per_step = 16 # in total and across all ranks (note: examples, not samples/completions!)
 num_samples = 16 # number of samples per example (/question)
-max_new_tokens = 1800
+max_new_tokens = 2048
 temperature = 1.0
 top_k = 50 # TODO: try None?
 unembedding_lr = 0.004
@@ -83,10 +91,43 @@ val_task = GSM8K(subset="main", split="test")
 num_steps = (len(train_task) // examples_per_step) * num_epochs
 print0(f"Calculated number of steps: {num_steps}")
 
+
+def get_indices_sorted_by_solved_percentage(task):
+    """
+    Returns dataset indices sorted by solved percentage (descending). Falls back
+    to the original order if the metadata is unavailable.
+    """
+    logical_order = getattr(task, "_order", None)
+    if logical_order is not None:
+        return list(range(len(logical_order)))
+    dataset = getattr(task, "ds", None)
+    if dataset is None or "solved_percentage" not in getattr(dataset, "column_names", []):
+        return list(range(len(task)))
+
+    def to_float(val):
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return 0.0
+
+    indices = list(range(len(task)))
+    indices.sort(
+        key=lambda idx: to_float(dataset[idx]["solved_percentage"]),
+        reverse=True,
+    )
+    return indices
+
+
+train_indices_by_difficulty = get_indices_sorted_by_solved_percentage(train_task)
+rank_indices = train_indices_by_difficulty[ddp_rank::ddp_world_size]
+if not rank_indices:
+    print0("Warning: no rank-specific data found; falling back to full dataset order.")
+    rank_indices = train_indices_by_difficulty
+
 @torch.no_grad()
 def get_batch():
     assistant_end = tokenizer.encode_special("<|assistant_end|>") # ok to use this token, it's only for padding and isn't used in the loss.
-    rank_indices = range(ddp_rank, len(train_task), ddp_world_size) # each rank is responsible for different examples in the training data
+    # each rank is responsible for different examples in the training data
     for example_idx in itertools.cycle(rank_indices):
 
         # First get the full conversation of both user and assistant messages
@@ -169,7 +210,7 @@ def run_gsm8k_eval(task, tokenizer, engine,
         prefix_length = len(tokens)
         # Generate k samples using batched generation inside the Engine
         assert num_samples <= device_batch_size # usually this is true. we can add a loop if not...
-        generated_token_sequences, masks = engine.generate_batch(
+        generated_token_sequences, _ = engine.generate_batch(
             tokens,
             num_samples=num_samples,
             max_tokens=max_completion_tokens,
@@ -339,7 +380,6 @@ for step in range(num_steps):
             )
 
 # Log to report
-from nanochat.report import get_report
 get_report().log(section="Chat RL", data=[
     user_config, # CLI args
 ])

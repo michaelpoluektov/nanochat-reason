@@ -37,12 +37,11 @@ def extract_answer(completion):
 
 
 class GSM8K(Task):
-
     def __init__(self, subset, split, **kwargs):
         super().__init__(**kwargs)
         assert subset in ["main", "socratic"], "GSM8K subset must be main|socratic"
         assert split in ["train", "test"], "GSM8K split must be train|test"
-        self.ds = load_dataset("openai/gsm8k", subset, split=split).shuffle(seed=42)
+        self.ds = load_dataset("accountblabla/gsm8k-sorted", subset, split=split)
 
     @property
     def eval_type(self):
@@ -54,8 +53,8 @@ class GSM8K(Task):
     def get_example(self, index):
         """ Get a single problem from the dataset. """
         row = self.ds[index]
-        question = row['question'] # string of the question prompt
-        answer = row['answer'] # string of the full solution and the answer after #### marker
+        question = row['question']
+        answer = row['answer']
         # Create and return the Conversation object
         # This is tricky because GSM8K uses tool calls, which we need to parse here.
         assistant_message_parts = []
