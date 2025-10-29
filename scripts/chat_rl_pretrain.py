@@ -23,8 +23,6 @@ from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, g
 from nanochat.checkpoint_manager import (
     load_model,
     save_checkpoint,
-    get_hf_upload_config_from_env,
-    maybe_upload_checkpoint,
 )
 from nanochat.device import get_autocast_kwargs
 from nanochat.report import get_report
@@ -63,7 +61,6 @@ init_lr_frac = 0.05
 eval_every = 50
 eval_batches = 32
 save_every = 0  # 0 => only save final checkpoint
-hf_upload = get_hf_upload_config_from_env()
 
 # allow CLI overrides
 config_keys = [k for k, v in globals().items() if not k.startswith("_") and isinstance(v, (int, float, bool, str))]
@@ -277,13 +274,6 @@ for step_idx in range(num_iterations):
             meta_payload,
         )
         print0(f"✅ Saved model checkpoint to {checkpoint_dir}")
-        maybe_upload_checkpoint(
-            checkpoints_root,
-            model_tag=model_tag_out,
-            step=step_idx + 1,
-            config=hf_upload,
-            default_commit_message=f"Upload checkpoint {model_tag_out} step {step_idx + 1:06d}",
-        )
 
 # Final save (if not already saved above)
 if master_process and (save_every == 0 or (num_iterations % save_every) != 0):
@@ -307,13 +297,6 @@ if master_process and (save_every == 0 or (num_iterations % save_every) != 0):
         meta_payload,
     )
     print0(f"✅ Saved model checkpoint to {checkpoint_dir}")
-    maybe_upload_checkpoint(
-        checkpoints_root,
-        model_tag=model_tag_out,
-        step=num_iterations,
-        config=hf_upload,
-        default_commit_message=f"Upload checkpoint {model_tag_out} step {num_iterations:06d}",
-    )
 
 # Report summary
 get_report().log(

@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Minimal pipeline to take the public nanochat d32 SFT checkpoint,
-# prepare it for nanochat, run RL pretraining, and push the result to Hugging Face.
-
 set -euo pipefail
 
 export OMP_NUM_THREADS=1
@@ -118,13 +115,9 @@ python scripts/gsm8k_token_length_stats.py \
     --dataset "$TARGET_DATASET_PATH" \
     --tokenizer-dir "$TOKENIZER_DIR"
 
-# -----------------------------------------------------------------------------
-# Reset report so the RL pretrain run is tracked cleanly.
 
 python -m nanochat.report reset
 
-# -----------------------------------------------------------------------------
-# Run RL pretraining (defaults to 1 process, override via NPROC_PER_NODE=8 if you have more GPUs).
 
 NPROC_PER_NODE=1
 if [ "$NPROC_PER_NODE" -gt 1 ]; then
@@ -133,8 +126,6 @@ else
     python -m scripts.chat_rl_pretrain --run="$WANDB_RUN"
 fi
 
-# -----------------------------------------------------------------------------
-# Evaluate the pretraining checkpoint on GSM8K (test split, pass@k style settings from chat_rl.py).
 
 python -m scripts.chat_eval \
     -i prerl \
@@ -145,8 +136,10 @@ python -m scripts.chat_eval \
     --top-k 50 \
     --max-problems 100
 
-# -----------------------------------------------------------------------------
-# Generate final report markdown for convenience.
+  echo "📤 Uploading checkpoint to Hugging Face..."
+  python -m scripts.upload_checkpoint \
+      --source-or-dir=prerl
+
 
 python -m nanochat.report generate
 
