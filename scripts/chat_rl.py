@@ -46,9 +46,9 @@ run = os.environ.get("WANDB_RUN") # wandb run name
 wandb.login()
 source = "sft" # mid|sft
 dtype = "bfloat16"
-device_batch_size = 8 # no forward pass will go above this to not OOM
+device_batch_size = 16 # max rollouts processed per forward/backward pass
 examples_per_step = 16 # in total and across all ranks (note: examples, not samples/completions!)
-num_samples = 16 # number of samples per example (/question)
+num_samples = 32 # number of samples per example (/question)
 max_new_tokens = 2048
 temperature = 1.0
 top_k = 50 # TODO: try None?
@@ -66,6 +66,7 @@ hf_upload = get_hf_upload_config_from_env()
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
+assert num_samples % device_batch_size == 0, "num_samples must be divisible by device_batch_size"
 # -----------------------------------------------------------------------------
 
 # Init compute/precision
@@ -296,11 +297,14 @@ for step in range(num_steps):
         # Evaluate the loss and gradients
         model.train() # ensure the model is in train mode
         # We need one more loop because we can never exceed the device_batch_size
-        assert inputs_all.size(0) % device_batch_size == 0
+        if inputs_all.size(0) == 0:
+            continue
+        assert inputs_all.size(0) % device_batch_size == 0, "num_samples per example must be divisible by device_batch_size"
         num_passes = inputs_all.size(0) // device_batch_size
         for pass_idx in range(num_passes):
             # Pluck out the batch for this pass
-            b0, b1 = pass_idx * device_batch_size, (pass_idx + 1) * device_batch_size
+            b0 = pass_idx * device_batch_size
+            b1 = (pass_idx + 1) * device_batch_size
             inputs = inputs_all[b0:b1]
             targets = targets_all[b0:b1]
             rewards = rewards_all[b0:b1]

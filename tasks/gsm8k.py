@@ -36,6 +36,10 @@ def extract_answer(completion):
     return match_str
 
 
+THINK_TAG_BONUS = 0.1
+PARSED_BOX_BONUS = 0.1
+
+
 class GSM8K(Task):
     def __init__(self, subset, split, **kwargs):
         super().__init__(**kwargs)
@@ -128,5 +132,10 @@ class GSM8K(Task):
         Later this could be made more complex (e.g. format matching etc.)
         """
         is_correct = self.evaluate(conversation, assistant_response)
-        is_correct_float = float(is_correct)
-        return is_correct_float
+        reward = float(is_correct)
+        # Encourage reasoning traces and well-formed boxed answers even when incorrect.
+        if "<think>" in assistant_response and "</think>" in assistant_response:
+            reward += THINK_TAG_BONUS
+        if extract_answer(assistant_response) is not None:
+            reward += PARSED_BOX_BONUS
+        return reward
