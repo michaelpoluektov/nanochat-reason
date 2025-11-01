@@ -2,6 +2,21 @@
 
 ![nanochat logo](dev/nanochat.png)
 
+## Pull latest upstream then
+
+- Add HF upload/download scripts, add extra dir type (chat_rl_pretrain)
+- Change max_tokens everywhere
+- Add GH actions everywhere, only build environment to but pull the repo
+- Token length stats script
+- Add the tokenizer changes, test that it works correctly
+- Add `chat_rl_pretrain.py`, verify that with GSM8K the model produces think tokens and boxed answer, and longer sequence
+- Change `chat_rl.py` to use larger batch size, understand what it actually does
+- Clean up HuggingFace and envvars
+- Use dataset that sorts problems based on complexity
+- Run chat_rl.py and verify that outputs as expected
+- Do the latent space thing
+
+
 ## Reasoning TODO
 
 - Add `<think>` and `</think>` to tokenizer properly

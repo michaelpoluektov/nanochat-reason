@@ -17,7 +17,9 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=default
 """
 
 import itertools
+import json
 import os
+import tempfile
 
 import torch
 import torch.distributed as dist
@@ -49,6 +51,7 @@ dtype = "bfloat16"
 device_batch_size = 16 # max rollouts processed per forward/backward pass
 examples_per_step = 16 # in total and across all ranks (note: examples, not samples/completions!)
 num_samples = 32 # number of samples per example (/question)
+artifact_every = 200 # how often to upload a rollout artifact (in global steps); 0 disables
 max_new_tokens = 2048
 temperature = 1.0
 top_k = 50 # TODO: try None?
@@ -187,7 +190,7 @@ def get_batch():
         mu = rewards.mean()
         advantages = rewards - mu
         # yield inputs/targets as (B, T) of ids and rewards as (B,) of floats
-        yield generated_token_sequences, inputs, targets, rewards, advantages
+        yield example_idx, conversation, prefix_length, generated_token_sequences, inputs, targets, rewards, advantages
 
 # -----------------------------------------------------------------------------
 # Simple evaluation loop for GSM8K pass@k
@@ -293,7 +296,16 @@ for step in range(num_steps):
     sequence_lengths = []
     for example_step in range(examples_per_rank):
         # Get one batch corresponding to one example in the training dataset
-        sequences_all, inputs_all, targets_all, rewards_all, advantages_all = next(batch_iterator)
+        (
+            example_idx,
+            conversation,
+            prefix_length,
+            sequences_all,
+            inputs_all,
+            targets_all,
+            rewards_all,
+            advantages_all,
+        ) = next(batch_iterator)
         # Evaluate the loss and gradients
         model.train() # ensure the model is in train mode
         # We need one more loop because we can never exceed the device_batch_size
@@ -325,6 +337,53 @@ for step in range(num_steps):
         # For logging
         rewards_list.append(rewards_all.mean().item())
         sequence_lengths.extend(len(seq) for seq in sequences_all)
+        # Optionally upload a rollout artifact
+        should_upload_artifact = (
+            master_process
+            and artifact_every > 0
+            and (step % artifact_every == 0)
+            and example_step == 0
+            and hasattr(wandb_run, "log_artifact")
+        )
+        if should_upload_artifact:
+            try:
+                prompt_tokens = sequences_all[0][:prefix_length]
+                prompt_text = tokenizer.decode(prompt_tokens)
+                samples = []
+                for seq_tokens, reward_value, advantage_value in zip(
+                    sequences_all,
+                    rewards_all.tolist(),
+                    advantages_all.tolist(),
+                ):
+                    completion = tokenizer.decode(seq_tokens[prefix_length:])
+                    samples.append(
+                        {
+                            "completion": completion,
+                            "reward": float(reward_value),
+                            "advantage": float(advantage_value),
+                            "length": len(seq_tokens) - prefix_length,
+                        }
+                    )
+                artifact_payload = {
+                    "step": step,
+                    "example_index": example_idx,
+                    "conversation": conversation,
+                    "prompt": prompt_text,
+                    "samples": samples,
+                }
+                artifact = wandb.Artifact(
+                    name=f"rollout_step_{step:06d}",
+                    type="rollout",
+                    metadata={"step": step, "example_index": example_idx},
+                )
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    file_path = os.path.join(tmpdir, f"rollout_step_{step:06d}.json")
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        json.dump(artifact_payload, f, ensure_ascii=False, indent=2)
+                    artifact.add_file(file_path, name=os.path.basename(file_path))
+                    wandb_run.log_artifact(artifact)
+            except Exception as e: # pylint: disable=broad-except
+                print0(f"Warning: failed to upload rollout artifact: {e}")
 
     # A bunch of logging for how the rollouts went this step
     mean_reward = sum(rewards_list) / len(rewards_list)
