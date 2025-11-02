@@ -5,3 +5,4 @@ rustbpe/target/
 dev-ignore/
 keys.txt
 data/
+uv.lock
