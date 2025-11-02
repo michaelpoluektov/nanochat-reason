@@ -54,7 +54,7 @@ class GSM8K(Task):
     def num_examples(self):
         return len(self.ds)
 
-    def get_example(self, index):
+    def get_example(self, index) -> dict[str, list[dict]]:
         """ Get a single problem from the dataset. """
         row = self.ds[index]
         question = row['question']

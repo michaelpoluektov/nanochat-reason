@@ -17,9 +17,9 @@ torchrun --standalone --nproc_per_node=8 -m scripts.chat_rl -- --run=default
 """
 
 import itertools
-import json
 import os
-import tempfile
+from dataclasses import dataclass
+from typing import Iterator
 
 import torch
 import torch.distributed as dist
@@ -47,11 +47,10 @@ from tasks.gsm8k import GSM8K
 run = os.environ.get("WANDB_RUN") # wandb run name
 wandb.login()
 source = "sft" # mid|sft
-dtype = "bfloat16"
+dtype = torch.bfloat16
 device_batch_size = 16 # max rollouts processed per forward/backward pass
 examples_per_step = 16 # in total and across all ranks (note: examples, not samples/completions!)
 num_samples = 32 # number of samples per example (/question)
-artifact_every = 10 # how often to upload a rollout artifact (in global steps); 0 disables
 max_new_tokens = 2048
 temperature = 1.0
 top_k = 50 # TODO: try None?
@@ -75,7 +74,6 @@ assert num_samples % device_batch_size == 0, "num_samples must be divisible by d
 # Init compute/precision
 ddp, ddp_rank, ddp_local_rank, ddp_world_size, device = compute_init()
 master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
-dtype = torch.float32 if dtype == 'float32' else torch.bfloat16
 autocast_kwargs = get_autocast_kwargs(device)
 autocast_ctx = torch.amp.autocast(**{**autocast_kwargs, "dtype": dtype})
 
@@ -128,8 +126,18 @@ if not rank_indices:
     print0("Warning: no rank-specific data found; falling back to full dataset order.")
     rank_indices = train_indices_by_difficulty
 
+@dataclass
+class Batch:
+    generated_token_sequences: list[torch.Tensor]  # list length B with tensors (T,)
+    inputs: torch.Tensor  # (B, T-1)
+    targets: torch.Tensor  # (B, T-1)
+    rewards: torch.Tensor  # (B,)
+    advantages: torch.Tensor  # (B,)
+
+
+
 @torch.no_grad()
-def get_batch():
+def get_batch() -> Iterator[Batch]:
     assistant_end = tokenizer.encode_special("<|assistant_end|>") # ok to use this token, it's only for padding and isn't used in the loss.
     # each rank is responsible for different examples in the training data
     for example_idx in itertools.cycle(rank_indices):
@@ -190,7 +198,7 @@ def get_batch():
         mu = rewards.mean()
         advantages = rewards - mu
         # yield inputs/targets as (B, T) of ids and rewards as (B,) of floats
-        yield example_idx, conversation, prefix_length, generated_token_sequences, inputs, targets, rewards, advantages
+        yield Batch(generated_token_sequences, inputs, targets, rewards, advantages)
 
 # -----------------------------------------------------------------------------
 # Simple evaluation loop for GSM8K pass@k
@@ -227,14 +235,9 @@ def run_gsm8k_eval(task, tokenizer, engine,
             generated_tokens = sample_tokens[prefix_length:]
             generated_text = tokenizer.decode(generated_tokens)
             is_correct = task.evaluate(conversation, generated_text)
-            outcomes.append({
-                "is_correct": is_correct
-            })
+            outcomes.append({"is_correct": is_correct})
         # A bit bloated because I wanted to do more complex logging at one point.
-        record = {
-            "idx": idx,
-            "outcomes": outcomes,
-        }
+        record = {"idx": idx, "outcomes": outcomes}
         yield record
 
 # -----------------------------------------------------------------------------
@@ -296,31 +299,22 @@ for step in range(num_steps):
     sequence_lengths = []
     for example_step in range(examples_per_rank):
         # Get one batch corresponding to one example in the training dataset
-        (
-            example_idx,
-            conversation,
-            prefix_length,
-            sequences_all,
-            inputs_all,
-            targets_all,
-            rewards_all,
-            advantages_all,
-        ) = next(batch_iterator)
+        batch = next(batch_iterator)
         # Evaluate the loss and gradients
         model.train() # ensure the model is in train mode
         # We need one more loop because we can never exceed the device_batch_size
-        if inputs_all.size(0) == 0:
+        if batch.inputs.size(0) == 0:
             continue
-        assert inputs_all.size(0) % device_batch_size == 0, "num_samples per example must be divisible by device_batch_size"
-        num_passes = inputs_all.size(0) // device_batch_size
+        assert batch.inputs.size(0) % device_batch_size == 0, "num_samples per example must be divisible by device_batch_size"
+        num_passes = batch.inputs.size(0) // device_batch_size
         for pass_idx in range(num_passes):
             # Pluck out the batch for this pass
             b0 = pass_idx * device_batch_size
             b1 = (pass_idx + 1) * device_batch_size
-            inputs = inputs_all[b0:b1]
-            targets = targets_all[b0:b1]
-            rewards = rewards_all[b0:b1]
-            advantages = advantages_all[b0:b1]
+            inputs = batch.inputs[b0:b1]
+            targets = batch.targets[b0:b1]
+            rewards = batch.rewards[b0:b1]
+            advantages = batch.advantages[b0:b1]
             # Calculate log probabilities. Note that the loss calculates NLL = -logp, so we negate
             with autocast_ctx:
                 logp = -model(inputs, targets, loss_reduction='none').view_as(inputs) # (B, T)
@@ -335,56 +329,8 @@ for step in range(num_steps):
             loss.backward()
             print0(f"Step {step}/{num_steps} | Example step {example_step} | Pass {pass_idx} | loss: {loss.item():.6f} | Average reward: {rewards.mean().item()}")
         # For logging
-        rewards_list.append(rewards_all.mean().item())
-        sequence_lengths.extend(len(seq) for seq in sequences_all)
-        # Optionally upload a rollout artifact
-        should_upload_artifact = (
-            master_process
-            and artifact_every > 0
-            and (step % artifact_every == 0)
-            and example_step == 0
-            and hasattr(wandb_run, "log_artifact")
-        )
-        if not should_upload_artifact:
-            continue
-        try:
-            prompt_tokens = sequences_all[0][:prefix_length]
-            prompt_text = tokenizer.decode(prompt_tokens)
-            samples = []
-            for seq_tokens, reward_value, advantage_value in zip(
-                sequences_all,
-                rewards_all.tolist(),
-                advantages_all.tolist(),
-            ):
-                completion = tokenizer.decode(seq_tokens[prefix_length:])
-                samples.append(
-                    {
-                        "completion": completion,
-                        "reward": float(reward_value),
-                        "advantage": float(advantage_value),
-                        "length": len(seq_tokens) - prefix_length,
-                    }
-                )
-            artifact_payload = {
-                "step": step,
-                "example_index": example_idx,
-                "conversation": conversation,
-                "prompt": prompt_text,
-                "samples": samples,
-            }
-            artifact = wandb.Artifact(
-                name=f"rollout_step_{step:06d}",
-                type="rollout",
-                metadata={"step": step, "example_index": example_idx},
-            )
-            with tempfile.TemporaryDirectory() as tmpdir:
-                file_path = os.path.join(tmpdir, f"rollout_step_{step:06d}.json")
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump(artifact_payload, f, ensure_ascii=False, indent=2)
-                artifact.add_file(file_path, name=os.path.basename(file_path))
-                wandb_run.log_artifact(artifact)
-        except Exception as e: # pylint: disable=broad-except
-            print0(f"Warning: failed to upload rollout artifact: {e}")
+        rewards_list.append(batch.rewards.mean().item())
+        sequence_lengths.extend(len(seq) for seq in batch.generated_token_sequences)
 
     # A bunch of logging for how the rollouts went this step
     mean_reward = sum(rewards_list) / len(rewards_list)
@@ -411,10 +357,7 @@ for step in range(num_steps):
     for opt in optimizers: # then step the optimizers
         opt.step()
     model.zero_grad(set_to_none=True)
-    wandb_run.log({
-        "step": step,
-        "lrm": lrm,
-    })
+    wandb_run.log({"step": step, "lrm": lrm})
 
     # Master process saves the model once in a while. Skip first step. Save last step.
     if master_process and ((step > 0 and step % save_every == 0) or step == num_steps - 1):
