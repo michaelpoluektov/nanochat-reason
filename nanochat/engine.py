@@ -83,7 +83,7 @@ class KVCache:
         for ix, (dim1, dim2) in enumerate(zip(self.kv_shape, other.kv_shape)):
             if ix in [0, 1, 3, 5]:
                 # num_layers, batch_size, num_heads, head_dim must match
-                assert dim1 == dim2, f"Batch dim mismatch: {dim1} != {dim2}"
+                assert dim1 == dim2, f"Dim {ix} mismatch: {dim1} != {dim2}"
             elif ix == 2:
                 # batch_size can be expanded
                 assert dim1 == dim2 or dim2 == 1, f"Batch dim mismatch: {dim1} != {dim2}"
@@ -109,9 +109,11 @@ class KVCache:
         if t1 > self.kv_cache.size(4):
             t_needed = t1 + 1024 # as much as we need plus buffer of 1024
             t_needed = (t_needed + 1023) & ~1023 # then round up to the nearest multiple of 1024
-            current_shape = list(self.kv_cache.shape)
-            current_shape[4] = t_needed
-            self.kv_cache.resize_(current_shape)
+            additional_shape = list(self.kv_cache.shape)
+            additional_shape[4] = t_needed - self.kv_cache.size(4)
+            additional_cache = torch.empty(additional_shape, dtype=k.dtype, device=k.device)
+            self.kv_cache = torch.cat([self.kv_cache, additional_cache], dim=4).contiguous()
+            self.kv_shape = self.kv_cache.shape
         # Insert k, v into the cache
         self.kv_cache[layer_idx, 0, :, :, t0:t1] = k
         self.kv_cache[layer_idx, 1, :, :, t0:t1] = v
