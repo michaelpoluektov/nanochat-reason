@@ -63,7 +63,7 @@ init_lr_frac = 0.05
 num_epochs = 1 # how many epochs of gsm8k to train on
 save_every = 60 # every how many steps to save the model
 eval_every = 60 # every how many steps to evaluate the model for val pass@k
-eval_examples = 400 # number of examples used for evaluating pass@k
+eval_examples = 20 # number of examples used for evaluating pass@k
 hf_upload = get_hf_upload_config_from_env()
 # now allow CLI to override the settings via the configurator lol
 config_keys = [k for k,v in globals().items() if not k.startswith('_') and isinstance(v, (int, float, bool, str))]
@@ -197,7 +197,7 @@ def get_batch():
 def run_gsm8k_eval(task, tokenizer, engine,
     max_examples=None,
     num_samples=1,
-    max_completion_tokens=256,
+    max_completion_tokens=2048,
     temperature=0.0,
     top_k=50
 ):

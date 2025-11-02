@@ -15,7 +15,7 @@ Notice that GSM8K uses tool calls inside << >> tags.
 """
 
 import re
-from datasets import load_dataset
+from datasets import Dataset, load_dataset
 from tasks.common import Task
 
 
@@ -25,7 +25,7 @@ GSM_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
 
 def extract_answer(completion):
     """
-    Extract the numerical answer from a ``\boxed{...}`` span. Returns ``None``
+    Extract the numerical answer from a ``\\boxed{...}`` span. Returns ``None``
     when no boxed answer is present.
     """
     match = BOXED_RE.search(completion)
@@ -45,7 +45,7 @@ class GSM8K(Task):
         super().__init__(**kwargs)
         assert subset in ["main", "socratic"], "GSM8K subset must be main|socratic"
         assert split in ["train", "test"], "GSM8K split must be train|test"
-        self.ds = load_dataset("accountblabla/gsm8k-sorted", subset, split=split)
+        self.ds: Dataset = load_dataset("accountblabla/gsm8k-sorted", subset, split=split) # type: ignore
 
     @property
     def eval_type(self):
@@ -96,12 +96,10 @@ class GSM8K(Task):
             {"role": "user", "content": question}, # note: simple string
             {"role": "assistant", "content": assistant_message_parts}, # note: list of parts (as dicts)
         ]
-        conversation = {
-            "messages": messages,
-        }
+        conversation = {"messages": messages}
         return conversation
 
-    def evaluate(self, conversation, assistant_response):
+    def evaluate(self, problem, completion):
         """
         Given (conversation, completion), return evaluation outcome (0 = wrong, 1 = correct)
         Note that:
@@ -111,15 +109,15 @@ class GSM8K(Task):
         TODO: Technically, assistant_response should be a Message (either a string or a list of parts)
               We can handle this later possibly. For now just assume string.
         """
-        assert isinstance(assistant_response, str), "Assuming simple string response for now"
+        assert isinstance(completion, str), "Assuming simple string response for now"
         # First extract the ground truth answer
-        assistant_message = conversation['messages'][-1]
+        assistant_message = problem['messages'][-1]
         assert assistant_message['role'] == "assistant", "Last message must be from the Assistant"
         assert isinstance(assistant_message['content'], list), "This is expected to be a list of parts"
         last_text_part = assistant_message['content'][-1]['text'] # this contains the final answer in GSM8K
         # Extract both the ground truth answer and the predicted answer
         ref_num = extract_answer(last_text_part)
-        pred_num = extract_answer(assistant_response)
+        pred_num = extract_answer(completion)
         if ref_num is None or pred_num is None:
             return 0
         # Compare and return the success as int
