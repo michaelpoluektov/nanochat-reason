@@ -51,7 +51,7 @@ dtype = "bfloat16"
 device_batch_size = 16 # max rollouts processed per forward/backward pass
 examples_per_step = 16 # in total and across all ranks (note: examples, not samples/completions!)
 num_samples = 32 # number of samples per example (/question)
-artifact_every = 200 # how often to upload a rollout artifact (in global steps); 0 disables
+artifact_every = 10 # how often to upload a rollout artifact (in global steps); 0 disables
 max_new_tokens = 2048
 temperature = 1.0
 top_k = 50 # TODO: try None?
@@ -345,45 +345,46 @@ for step in range(num_steps):
             and example_step == 0
             and hasattr(wandb_run, "log_artifact")
         )
-        if should_upload_artifact:
-            try:
-                prompt_tokens = sequences_all[0][:prefix_length]
-                prompt_text = tokenizer.decode(prompt_tokens)
-                samples = []
-                for seq_tokens, reward_value, advantage_value in zip(
-                    sequences_all,
-                    rewards_all.tolist(),
-                    advantages_all.tolist(),
-                ):
-                    completion = tokenizer.decode(seq_tokens[prefix_length:])
-                    samples.append(
-                        {
-                            "completion": completion,
-                            "reward": float(reward_value),
-                            "advantage": float(advantage_value),
-                            "length": len(seq_tokens) - prefix_length,
-                        }
-                    )
-                artifact_payload = {
-                    "step": step,
-                    "example_index": example_idx,
-                    "conversation": conversation,
-                    "prompt": prompt_text,
-                    "samples": samples,
-                }
-                artifact = wandb.Artifact(
-                    name=f"rollout_step_{step:06d}",
-                    type="rollout",
-                    metadata={"step": step, "example_index": example_idx},
+        if not should_upload_artifact:
+            continue
+        try:
+            prompt_tokens = sequences_all[0][:prefix_length]
+            prompt_text = tokenizer.decode(prompt_tokens)
+            samples = []
+            for seq_tokens, reward_value, advantage_value in zip(
+                sequences_all,
+                rewards_all.tolist(),
+                advantages_all.tolist(),
+            ):
+                completion = tokenizer.decode(seq_tokens[prefix_length:])
+                samples.append(
+                    {
+                        "completion": completion,
+                        "reward": float(reward_value),
+                        "advantage": float(advantage_value),
+                        "length": len(seq_tokens) - prefix_length,
+                    }
                 )
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    file_path = os.path.join(tmpdir, f"rollout_step_{step:06d}.json")
-                    with open(file_path, "w", encoding="utf-8") as f:
-                        json.dump(artifact_payload, f, ensure_ascii=False, indent=2)
-                    artifact.add_file(file_path, name=os.path.basename(file_path))
-                    wandb_run.log_artifact(artifact)
-            except Exception as e: # pylint: disable=broad-except
-                print0(f"Warning: failed to upload rollout artifact: {e}")
+            artifact_payload = {
+                "step": step,
+                "example_index": example_idx,
+                "conversation": conversation,
+                "prompt": prompt_text,
+                "samples": samples,
+            }
+            artifact = wandb.Artifact(
+                name=f"rollout_step_{step:06d}",
+                type="rollout",
+                metadata={"step": step, "example_index": example_idx},
+            )
+            with tempfile.TemporaryDirectory() as tmpdir:
+                file_path = os.path.join(tmpdir, f"rollout_step_{step:06d}.json")
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(artifact_payload, f, ensure_ascii=False, indent=2)
+                artifact.add_file(file_path, name=os.path.basename(file_path))
+                wandb_run.log_artifact(artifact)
+        except Exception as e: # pylint: disable=broad-except
+            print0(f"Warning: failed to upload rollout artifact: {e}")
 
     # A bunch of logging for how the rollouts went this step
     mean_reward = sum(rewards_list) / len(rewards_list)

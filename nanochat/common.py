@@ -151,3 +151,6 @@ class DummyWandb:
 
     def finish(self):
         pass
+
+    def log_artifact(self, artifact):
+        pass
