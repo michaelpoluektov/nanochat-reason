@@ -23,7 +23,7 @@ if [ "$HF_PRERL_REPO_ID" = "your-username/rl-pretrain-model" ]; then
     exit 1
 fi
 
-uv sync
+uv sync --extra gpu
 source .venv/bin/activate
 
 export WANDB_RUN
