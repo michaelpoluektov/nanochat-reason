@@ -24,8 +24,6 @@ fi
 # -----------------------------------------------------------------------------
 # Python environment (reuse the same steps as speedrun.sh)
 
-command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
-[ -d ".venv" ] || uv venv
 uv sync
 source .venv/bin/activate
 

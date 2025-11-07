@@ -47,7 +47,12 @@ def parse_args():
         default="chat_rl_trace.json",
         help="Chrome trace output path. Set to '' to skip exporting.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if isinstance(args.compiler_backend, str) and args.compiler_backend.lower() == "none":
+        args.compiler_backend = None
+    if isinstance(args.compiler_mode, str) and args.compiler_mode.lower() == "none":
+        args.compiler_mode = None
+    return args
 
 
 def main():
