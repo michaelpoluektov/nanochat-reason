@@ -69,11 +69,12 @@ def main():
         prompt_fraction=args.prompt_fraction,
         device=device,
     )
-    model_c = torch.compile(
-        model,
-        backend=args.compiler_backend,
-        mode=args.compiler_mode,
-    )
+    compile_kwargs = {}
+    if args.compiler_backend is not None:
+        compile_kwargs["backend"] = args.compiler_backend
+    if args.compiler_mode is not None:
+        compile_kwargs["mode"] = args.compiler_mode
+    model_c = torch.compile(model, **compile_kwargs)
     autocast_kwargs = get_autocast_kwargs(device)
     if args.no_amp:
         autocast_kwargs["enabled"] = False
