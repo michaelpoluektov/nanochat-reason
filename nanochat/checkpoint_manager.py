@@ -216,35 +216,6 @@ def upload_model_to_hf(
     ignore_patterns=None,
     create_pr=False,
 ):
-    """
-    Upload a checkpoint to the Hugging Face Hub.
-
-    Parameters
-    ----------
-    source_or_dir : str
-        Either a nanochat source key (\"base\", \"mid\", \"sft\", \"rl\") or a path
-        to the directory that contains model checkpoints.
-    repo_id : str
-        Repository identifier on the Hugging Face Hub (e.g. \"username/model-name\").
-    model_tag : str, optional
-        Specific model subdirectory inside ``source_or_dir``; defaults to the largest model.
-    step : int, optional
-        Training step to upload; defaults to the last available step.
-    token : str, optional
-        Hugging Face access token. If omitted, the hub library uses the cached token.
-    private : bool, optional
-        Whether to create the repository as private when it does not exist yet.
-    branch : str, optional
-        Target branch or revision on the Hub. Defaults to the repository's default branch.
-    commit_message : str, optional
-        Custom commit message for the upload.
-    allow_patterns : Union[str, list[str]], optional
-        Glob patterns selecting which files to upload. Defaults to the chosen checkpoint files.
-    ignore_patterns : Union[str, list[str]], optional
-        Glob patterns for files that should be ignored during the upload.
-    create_pr : bool, optional
-        Whether to open a pull request instead of committing directly.
-    """
     assert int(os.environ.get("RANK", 0)) == 0, "Only rank 0 should upload checkpoints"
     if not repo_id:
         raise ValueError("repo_id must be provided (e.g. 'username/model-name').")

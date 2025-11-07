@@ -6,3 +6,4 @@ dev-ignore/
 keys.txt
 data/
 uv.lock
+*_trace.json

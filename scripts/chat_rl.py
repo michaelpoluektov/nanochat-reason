@@ -54,6 +54,8 @@ num_samples = 16 # number of samples per example (/question)
 max_new_tokens = 2048
 temperature = 1.0
 top_k = 50 # TODO: try None?
+torch_compile = True
+torch_compile_mode = "max-autotune"
 unembedding_lr = 0.004
 embedding_lr = 0.2
 matrix_lr = 0.02
@@ -83,6 +85,12 @@ wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl
 
 # Init model and tokenizer
 model, tokenizer, meta = load_model(source, device, phase="eval")
+if torch_compile:
+    compile_kwargs = {}
+    if torch_compile_mode:
+        compile_kwargs["mode"] = torch_compile_mode
+        model = torch.compile(model, **compile_kwargs)
+    print0(f"Compiled model with torch.compile (mode={torch_compile_mode})")
 engine = Engine(model, tokenizer) # for sampling rollouts
 
 # -----------------------------------------------------------------------------

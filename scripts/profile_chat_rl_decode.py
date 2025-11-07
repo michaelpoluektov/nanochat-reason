@@ -13,8 +13,6 @@ from nanochat.common import compute_cleanup, compute_init, print0
 from nanochat.device import get_autocast_kwargs
 from nanochat.engine import Engine
 
-# ---------------------------------------------------------------------------
-# Configuration (edit the constants below instead of passing CLI flags)
 SOURCE = "sft"
 PROMPT_TEXT = "Solve 12 + 34. Show your work."
 NUM_SAMPLES = 16

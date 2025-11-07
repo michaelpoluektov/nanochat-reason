@@ -12,10 +12,8 @@ from nanochat.checkpoint_manager import load_model
 from nanochat.common import compute_cleanup, compute_init, print0
 from nanochat.device import get_autocast_kwargs
 
-# ---------------------------------------------------------------------------
-# Configuration (edit these constants instead of passing CLI flags)
 SOURCE = "sft"
-BATCH_SIZE = 16
+BATCH_SIZE = 8
 SEQ_LEN = 2048
 PROMPT_FRACTION = 0.3
 COMPILER_BACKEND = None  # e.g. "inductor"
