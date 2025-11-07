@@ -46,7 +46,7 @@ RUN install -m 0755 scripts/forward_env_entrypoint.sh /usr/local/bin/forward_env
 # Create project venv, install Python deps, and pre-build the Rust tokenizer
 RUN set -eux; \
   uv venv --python=python3; \
-  uv sync --extra gpu; \
+  uv sync; \
   uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 
 # Make project virtualenv active by default
