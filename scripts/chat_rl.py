@@ -50,7 +50,7 @@ source = "sft" # mid|sft
 dtype = torch.bfloat16
 device_batch_size = 16 # max rollouts processed per forward/backward pass
 examples_per_step = 16 # in total and across all ranks (note: examples, not samples/completions!)
-num_samples = 32 # number of samples per example (/question)
+num_samples = 16 # number of samples per example (/question)
 max_new_tokens = 2048
 temperature = 1.0
 top_k = 50 # TODO: try None?
@@ -289,10 +289,7 @@ for step in range(num_steps):
         print_passk = [f"Pass@{k}: {passk[k - 1].item():.4f}" for k in range(1, device_batch_size + 1)]
         print0(f"Step {step} | {', '.join(print_passk)}")
         log_passk = {f"pass@{k}": passk[k - 1].item() for k in range(1, device_batch_size + 1)}
-        wandb_run.log({
-            "step": step,
-            **log_passk,
-        })
+        wandb_run.log({"step": step, **log_passk})
 
     # Forward/Backward on rollouts over multiple examples in the dataset
     rewards_list = []
@@ -303,10 +300,10 @@ for step in range(num_steps):
         # Evaluate the loss and gradients
         model.train() # ensure the model is in train mode
         # We need one more loop because we can never exceed the device_batch_size
-        if batch.inputs.size(0) == 0:
-            continue
-        assert batch.inputs.size(0) % device_batch_size == 0, "num_samples per example must be divisible by device_batch_size"
-        num_passes = batch.inputs.size(0) // device_batch_size
+        bis = batch.inputs.size(0)
+        if bis == 0: continue
+        assert bis % device_batch_size == 0, "num_samples per example must be divisible by device_batch_size"
+        num_passes = bis // device_batch_size
         for pass_idx in range(num_passes):
             # Pluck out the batch for this pass
             b0 = pass_idx * device_batch_size

@@ -36,8 +36,8 @@ def extract_answer(completion):
     return match_str
 
 
-THINK_TAG_BONUS = 0.1
-PARSED_BOX_BONUS = 0.1
+THINK_TAG_BONUS = 0.2
+PARSED_BOX_BONUS = 0.2
 
 
 class GSM8K(Task):
