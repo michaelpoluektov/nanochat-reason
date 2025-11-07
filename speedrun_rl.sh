@@ -23,8 +23,6 @@ if [ "$HF_PRERL_REPO_ID" = "your-username/rl-pretrain-model" ]; then
     exit 1
 fi
 
-command -v uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
-[ -d ".venv" ] || uv venv
 uv sync
 source .venv/bin/activate
 
