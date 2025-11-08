@@ -105,7 +105,8 @@ if torch_compile:
     model = torch.compile(model, **compile_kwargs)
     with torch.no_grad():
         warmup_inputs, warmup_targets = warmup_tensors
-        model(warmup_inputs, warmup_targets, loss_reduction="none")
+        with autocast_ctx:
+            model(warmup_inputs, warmup_targets, loss_reduction="none")
     del warmup_tensors
     print0(f"Compiled model with torch.compile (mode={torch_compile_mode}) and warm-up ran with dynamic sequence length hints")
 engine = Engine(model, tokenizer) # for sampling rollouts
