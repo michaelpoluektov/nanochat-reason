@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Iterator
 
 import torch
+import torch._dynamo as dynamo
 import torch.distributed as dist
 import wandb
 
@@ -142,6 +143,14 @@ class Batch:
     rewards: torch.Tensor  # (B,)
     advantages: torch.Tensor  # (B,)
 
+
+def mark_sequence_length_dynamic(*tensors: torch.Tensor):
+    if not torch_compile:
+        return
+    for tensor in tensors:
+        if tensor is None or tensor.ndim < 2:
+            continue
+        dynamo.mark_dynamic(tensor, 1)
 
 
 @torch.no_grad()
@@ -320,6 +329,7 @@ for step in range(num_steps):
             targets = batch.targets[b0:b1]
             rewards = batch.rewards[b0:b1]
             advantages = batch.advantages[b0:b1]
+            mark_sequence_length_dynamic(inputs, targets)
             # Calculate log probabilities. Note that the loss calculates NLL = -logp, so we negate
             with autocast_ctx:
                 logp = -model(inputs, targets, loss_reduction='none').view_as(inputs) # (B, T)
@@ -376,9 +386,7 @@ for step in range(num_steps):
             step,
             model.state_dict(),
             None, # note: we don't bother to save the optimizer state
-            {
-                "model_config": model_config_kwargs,
-            }
+            {"model_config": model_config_kwargs}
         )
         print(f"✅ Saved model checkpoint to {checkpoint_dir}")
         should_upload = hf_upload.upload_every_save or step == num_steps - 1
