@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from typing import Iterator
 
 import torch
-import torch._dynamo as dynamo
 import torch.distributed as dist
 import wandb
 
@@ -55,8 +54,6 @@ num_samples = 16 # number of samples per example (/question)
 max_new_tokens = 2048
 temperature = 1.0
 top_k = 50 # TODO: try None?
-torch_compile = True
-torch_compile_mode = "default"
 unembedding_lr = 0.004
 embedding_lr = 0.2
 matrix_lr = 0.02
@@ -84,31 +81,8 @@ autocast_ctx = torch.amp.autocast(**{**autocast_kwargs, "dtype": dtype})
 use_dummy_wandb = run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl", name=run, config=user_config)
 
-
-def build_dynamic_warmup_tensors(model: torch.nn.Module, batch_size: int, device: torch.device):
-    seq_cap = getattr(model.config, "sequence_len", max_new_tokens)
-    warmup_seq_len = max(2, min(seq_cap, max_new_tokens))
-    dummy_inputs = torch.zeros((batch_size, warmup_seq_len), dtype=torch.long, device=device)
-    dummy_targets = torch.zeros_like(dummy_inputs)
-    dynamo.mark_dynamic(dummy_inputs, 1, min=2, max=seq_cap)
-    dynamo.mark_dynamic(dummy_targets, 1, min=2, max=seq_cap)
-    return dummy_inputs, dummy_targets
-
 # Init model and tokenizer
 model, tokenizer, meta = load_model(source, device, phase="eval")
-warmup_tensors = None
-if torch_compile:
-    warmup_tensors = build_dynamic_warmup_tensors(model, device_batch_size, device)
-    compile_kwargs = {}
-    if torch_compile_mode:
-        compile_kwargs["mode"] = torch_compile_mode
-    model = torch.compile(model, **compile_kwargs)
-    with torch.no_grad():
-        warmup_inputs, warmup_targets = warmup_tensors
-        with autocast_ctx:
-            model(warmup_inputs, warmup_targets, loss_reduction="none")
-    del warmup_tensors
-    print0(f"Compiled model with torch.compile (mode={torch_compile_mode}) and warm-up ran with dynamic sequence length hints")
 engine = Engine(model, tokenizer) # for sampling rollouts
 
 # -----------------------------------------------------------------------------
@@ -298,7 +272,7 @@ batch_iterator = get_batch()
 for step in range(num_steps):
 
     # Evaluate the model once in a while and log to wandb
-    if (step % eval_every == 0) and step:
+    if step % eval_every == 0:
         model.eval()
         passk = torch.zeros(device_batch_size, device=device) # pass@k for k=1..device_batch_size
         with autocast_ctx:
