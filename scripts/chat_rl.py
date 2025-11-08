@@ -150,7 +150,7 @@ def mark_sequence_length_dynamic(*tensors: torch.Tensor):
     for tensor in tensors:
         if tensor is None or tensor.ndim < 2:
             continue
-        dynamo.mark_dynamic(tensor, 1)
+        dynamo.mark_dynamic(tensor, 1, max=max_new_tokens)
 
 
 @torch.no_grad()
