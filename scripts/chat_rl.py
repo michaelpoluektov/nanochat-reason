@@ -281,7 +281,7 @@ batch_iterator = get_batch()
 for step in range(num_steps):
 
     # Evaluate the model once in a while and log to wandb
-    if step % eval_every == 0:
+    if (step % eval_every == 0) and step:
         model.eval()
         passk = torch.zeros(device_batch_size, device=device) # pass@k for k=1..device_batch_size
         with autocast_ctx:
