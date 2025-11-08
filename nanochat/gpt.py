@@ -78,30 +78,27 @@ class CausalSelfAttention(nn.Module):
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2) # make head be batch dim, i.e. (B, T, H, D) -> (B, H, T, D)
 
         # Apply KV cache: insert current k,v into cache, get the full view so far
+        lengths = None
         if kv_cache is not None:
-            k, v = kv_cache.insert_kv(self.layer_idx, k, v)
+            k, v, lengths = kv_cache.insert_kv(self.layer_idx, k, v)
+            lengths = lengths.to(q.device)
         Tq = q.size(2) # number of queries in this forward pass
         Tk = k.size(2) # number of keys/values in total (in the cache + current forward pass)
 
-        # Attention: queries attend to keys/values autoregressively. A few cases to handle:
-        enable_gqa = self.n_head != self.n_kv_head # Group Query Attention (GQA): duplicate key/value heads to match query heads if desired
-        if kv_cache is None or Tq == Tk:
-            # During training (no KV cache), attend as usual with causal attention
-            # And even if there is KV cache, we can still use this simple version when Tq == Tk
+        enable_gqa = self.n_head != self.n_kv_head # Group Query Attention (GQA)
+        if kv_cache is None:
             y = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=enable_gqa)
-        elif Tq == 1:
-            # During inference but with a single query in this forward pass:
-            # The query has to attend to all the keys/values in the cache
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=False, enable_gqa=enable_gqa)
         else:
-            # During inference AND we have a chunk of queries in this forward pass:
-            # First, each query attends to all the cached keys/values (i.e. full prefix)
-            attn_mask = torch.zeros((Tq, Tk), dtype=torch.bool, device=q.device) # True = keep, False = mask
-            prefix_len = Tk - Tq
-            if prefix_len > 0: # can't be negative but could be zero
-                attn_mask[:, :prefix_len] = True
-            # Then, causal attention within this chunk
-            attn_mask[:, prefix_len:] = torch.tril(torch.ones((Tq, Tq), dtype=torch.bool, device=q.device))
+            prefix_len = lengths - Tq
+            prefix_len = prefix_len.clamp(min=0)
+            tk_range = torch.arange(Tk, device=q.device)
+            prefix_mask = tk_range.unsqueeze(0) < prefix_len.unsqueeze(1) # (B, Tk)
+            prefix_mask = prefix_mask.unsqueeze(1).expand(-1, Tq, -1)
+            chunk_indices = tk_range.unsqueeze(0) - prefix_len.unsqueeze(1) # (B, Tk)
+            query_ids = torch.arange(Tq, device=q.device).view(1, Tq, 1)
+            chunk_mask = (chunk_indices.unsqueeze(1) >= 0) & (chunk_indices.unsqueeze(1) <= query_ids)
+            attn_mask = prefix_mask | chunk_mask
+            attn_mask = attn_mask.unsqueeze(1) # (B, 1, Tq, Tk)
             y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, enable_gqa=enable_gqa)
 
         # Re-assemble the heads side by side and project back to residual stream
@@ -249,8 +246,19 @@ class GPT(nn.Module):
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
         assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
-        T0 = 0 if kv_cache is None else kv_cache.get_pos()
-        cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
+        if kv_cache is None:
+            base_positions = torch.zeros(idx.size(0), dtype=torch.long, device=idx.device)
+        else:
+            base_positions = kv_cache.get_active_positions(idx.device)
+            if base_positions.numel() != idx.size(0):
+                raise ValueError("KV cache active rows must match batch size")
+        max_position = int((base_positions.max() + T - 1).item()) if base_positions.numel() > 0 else T - 1
+        assert max_position < self.cos.size(1), "Sequence length grew beyond rotary cache"
+        offsets = torch.arange(T, device=idx.device).unsqueeze(0)
+        position_ids = base_positions.unsqueeze(1) + offsets
+        cos_slice = self.cos[0, position_ids, 0, :].unsqueeze(2)
+        sin_slice = self.sin[0, position_ids, 0, :].unsqueeze(2)
+        cos_sin = (cos_slice, sin_slice)
 
         # Forward the trunk of the Transformer
         x = self.transformer.wte(idx)

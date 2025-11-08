@@ -49,6 +49,7 @@ wandb.login()
 source = "sft" # mid|sft
 dtype = torch.bfloat16
 device_batch_size = 16 # max rollouts processed per forward/backward pass
+inference_batch_multiplier = 1 # multiplier for inference-only batch size vs training batch size
 examples_per_step = 16 # in total and across all ranks (note: examples, not samples/completions!)
 num_samples = 16 # number of samples per example (/question)
 max_new_tokens = 2048
@@ -69,6 +70,10 @@ config_keys = [k for k,v in globals().items() if not k.startswith('_') and isins
 exec(open(os.path.join('nanochat', 'configurator.py')).read()) # overrides from command line or config file
 user_config = {k: globals()[k] for k in config_keys} # will be useful for logging
 assert num_samples % device_batch_size == 0, "num_samples must be divisible by device_batch_size"
+inference_batch_multiplier = int(inference_batch_multiplier)
+assert inference_batch_multiplier >= 1, "inference_batch_multiplier must be >= 1"
+inference_device_batch_size = device_batch_size * inference_batch_multiplier
+user_config["inference_device_batch_size"] = inference_device_batch_size
 # -----------------------------------------------------------------------------
 
 # Init compute/precision
@@ -138,66 +143,91 @@ class Batch:
 @torch.no_grad()
 def get_batch() -> Iterator[Batch]:
     assistant_end = tokenizer.encode_special("<|assistant_end|>") # ok to use this token, it's only for padding and isn't used in the loss.
-    # each rank is responsible for different examples in the training data
-    for example_idx in itertools.cycle(rank_indices):
+    can_fit_full_prompt = inference_device_batch_size >= num_samples
+    max_prompts_per_launch = 1
+    if can_fit_full_prompt:
+        max_prompts_per_launch = max(1, inference_device_batch_size // num_samples)
+        if rank_indices:
+            max_prompts_per_launch = min(max_prompts_per_launch, len(rank_indices))
+    rank_cycle = itertools.cycle(rank_indices)
+    pending_batches: list[Batch] = []
+    chunk_counter = 0
 
-        # First get the full conversation of both user and assistant messages
-        conversation = train_task[example_idx]
-
-        # Tokenize the conversation, deleting the last Assistant message and priming the Assistant for a completion instead
-        # (i.e. keep the <|assistant_start|>, but delete everything after it)
-        tokens = tokenizer.render_for_completion(conversation)
+    def build_batch(conversation, tokens, sequences, masks):
         prefix_length = len(tokens)
+        rewards = []
+        for sample_tokens in sequences:
+            generated_tokens = sample_tokens[prefix_length:]
+            generated_text = tokenizer.decode(generated_tokens)
+            reward = train_task.reward(conversation, generated_text)
+            rewards.append(reward)
+        max_length = max(len(seq) for seq in sequences)
+        padded_sequences = [seq + [assistant_end] * (max_length - len(seq)) for seq in sequences]
+        padded_masks = [mask + [0] * (max_length - len(mask)) for mask in masks]
+        ids = torch.tensor(padded_sequences, dtype=torch.long, device=device)
+        mask_ids = torch.tensor(padded_masks, dtype=torch.long, device=device)
+        inputs = ids[:, :-1]
+        targets = ids[:, 1:].clone()
+        targets[mask_ids[:, 1:] == 0] = -1
+        rewards_tensor = torch.tensor(rewards, dtype=torch.float, device=device)
+        mu = rewards_tensor.mean()
+        advantages = rewards_tensor - mu
+        return Batch(sequences, inputs, targets, rewards_tensor, advantages)
 
-        # Generate num_samples samples using batched generation, use loop to avoid OOMs
-        model.eval() # ensure the model is in eval mode
+    def generate_single_prompt(example_idx: int) -> Batch:
+        conversation = train_task[example_idx]
+        tokens = tokenizer.render_for_completion(conversation)
         generated_token_sequences = []
         masks = []
-        num_sampling_steps = num_samples // device_batch_size # go sequentially to prevent OOMs
-        for sampling_step in range(num_sampling_steps):
-            seed = hash((step, example_idx, sampling_step)) & 0x7FFFFFFF # positive half of int32
+        samples_remaining = num_samples
+        sampling_step = 0
+        model.eval()
+        while samples_remaining > 0:
+            current_bs = min(inference_device_batch_size, samples_remaining)
+            seed = hash((step, example_idx, sampling_step)) & 0x7FFFFFFF
             with autocast_ctx:
-                generated_token_sequences_batch, masks_batch = engine.generate_batch(
+                sequences_batch, masks_batch = engine.generate_batch(
                     tokens,
-                    num_samples=device_batch_size,
+                    num_samples=current_bs,
                     max_tokens=max_new_tokens,
                     temperature=temperature,
                     top_k=top_k,
-                    seed=seed, # must make sure to change the seed for each sampling step
+                    seed=seed,
                 )
-            generated_token_sequences.extend(generated_token_sequences_batch)
+            generated_token_sequences.extend(sequences_batch)
             masks.extend(masks_batch)
+            samples_remaining -= current_bs
+            sampling_step += 1
+        return build_batch(conversation, tokens, generated_token_sequences, masks)
 
-        # Calculate the rewards for each sample
-        rewards = []
-        for sample_tokens in generated_token_sequences:
-            # Get just the generated tokens (after the prompt)
-            generated_tokens = sample_tokens[prefix_length:]
-            # Decode the generated response
-            generated_text = tokenizer.decode(generated_tokens)
-            # Calculate the reward
-            reward = train_task.reward(conversation, generated_text)
-            rewards.append(reward)
+    # each rank is responsible for different examples in the training data
+    while True:
+        if not pending_batches:
+            if can_fit_full_prompt:
+                chunk_size = max_prompts_per_launch
+                chunk_indices = [next(rank_cycle) for _ in range(chunk_size)]
+                conversations = [train_task[idx] for idx in chunk_indices]
+                token_batches = [tokenizer.render_for_completion(conv) for conv in conversations]
+                seed = hash((step, tuple(chunk_indices), chunk_counter)) & 0x7FFFFFFF
+                model.eval()
+                with autocast_ctx:
+                    sequence_groups, mask_groups = engine.generate_multi_batch(
+                        token_batches,
+                        num_samples=[num_samples] * len(token_batches),
+                        max_tokens=max_new_tokens,
+                        temperature=temperature,
+                        top_k=top_k,
+                        seed=seed,
+                    )
+                for conversation, tokens, seqs, mask in zip(conversations, token_batches, sequence_groups, mask_groups):
+                    pending_batches.append(build_batch(conversation, tokens, seqs, mask))
+                chunk_counter += 1
+            else:
+                example_idx = next(rank_cycle)
+                pending_batches.append(generate_single_prompt(example_idx))
 
-        # Pad the sequences so that their lengths (in time) match
-        max_length = max(len(seq) for seq in generated_token_sequences)
-        padded_generated_token_sequences = [seq + [assistant_end] * (max_length - len(seq)) for seq in generated_token_sequences]
-        padded_masks = [mask + [0] * (max_length - len(mask)) for mask in masks]
-        # Stack up the sequences and masks into PyTorch tensors
-        ids = torch.tensor(padded_generated_token_sequences, dtype=torch.long, device=device)
-        mask_ids = torch.tensor(padded_masks, dtype=torch.long, device=device)
-        # Generate autoregressive inputs and targets to the Transformer
-        inputs = ids[:, :-1]
-        targets = ids[:, 1:].clone() # clone to avoid in-place modification:
-        targets[mask_ids[:, 1:] == 0] = -1 # <-- inplace modification right here. -1 is the ignore index
-        # NOTE also that the Engine returns mask=0 for BOTH the prompt tokens AND the tool use tokens.
-        # So we will (correctly) end up not training on the prompt tokens, or the tool use forced tokens.
-        rewards = torch.tensor(rewards, dtype=torch.float, device=device)
-        # Calculate the advantages by simply subtracting the mean (instead of z-score (x-mu)/sigma)
-        mu = rewards.mean()
-        advantages = rewards - mu
-        # yield inputs/targets as (B, T) of ids and rewards as (B,) of floats
-        yield Batch(generated_token_sequences, inputs, targets, rewards, advantages)
+        batch = pending_batches.pop(0)
+        yield batch
 
 # -----------------------------------------------------------------------------
 # Simple evaluation loop for GSM8K pass@k
@@ -220,7 +250,6 @@ def run_gsm8k_eval(task, tokenizer, engine,
         tokens = tokenizer.render_for_completion(conversation)
         prefix_length = len(tokens)
         # Generate k samples using batched generation inside the Engine
-        assert num_samples <= device_batch_size # usually this is true. we can add a loop if not...
         generated_token_sequences, _ = engine.generate_batch(
             tokens,
             num_samples=num_samples,
@@ -274,20 +303,28 @@ for step in range(num_steps):
     # Evaluate the model once in a while and log to wandb
     if step % eval_every == 0:
         model.eval()
-        passk = torch.zeros(device_batch_size, device=device) # pass@k for k=1..device_batch_size
+        eval_num_samples = inference_device_batch_size
+        passk = torch.zeros(eval_num_samples, device=device) # pass@k for k=1..eval_num_samples
         with autocast_ctx:
-            records_iter = run_gsm8k_eval(val_task, tokenizer, engine, num_samples=device_batch_size, max_examples=eval_examples, temperature=1.0)
+            records_iter = run_gsm8k_eval(
+                val_task,
+                tokenizer,
+                engine,
+                num_samples=inference_device_batch_size,
+                max_examples=eval_examples,
+                temperature=1.0,
+            )
             records = list(records_iter) # collect all records
-        for k in range(1, device_batch_size + 1):
+        for k in range(1, eval_num_samples + 1):
             passk[k - 1] = sum(any(o["is_correct"] for o in r["outcomes"][:k]) for r in records)
         num_records = torch.tensor(len(records), dtype=torch.long, device=device)
         if ddp:
             dist.all_reduce(num_records, op=dist.ReduceOp.SUM)
             dist.all_reduce(passk, op=dist.ReduceOp.SUM)
         passk = passk / num_records.item() # normalize by the total number of records
-        print_passk = [f"Pass@{k}: {passk[k - 1].item():.4f}" for k in range(1, device_batch_size + 1)]
+        print_passk = [f"Pass@{k}: {passk[k - 1].item():.4f}" for k in range(1, eval_num_samples + 1)]
         print0(f"Step {step} | {', '.join(print_passk)}")
-        log_passk = {f"pass@{k}": passk[k - 1].item() for k in range(1, device_batch_size + 1)}
+        log_passk = {f"pass@{k}": passk[k - 1].item() for k in range(1, eval_num_samples + 1)}
         wandb_run.log({"step": step, **log_passk})
 
     # Forward/Backward on rollouts over multiple examples in the dataset
