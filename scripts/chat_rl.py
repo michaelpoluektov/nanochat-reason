@@ -84,14 +84,30 @@ autocast_ctx = torch.amp.autocast(**{**autocast_kwargs, "dtype": dtype})
 use_dummy_wandb = run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat-rl", name=run, config=user_config)
 
+
+def build_dynamic_warmup_tensors(model: torch.nn.Module, batch_size: int, device: torch.device):
+    seq_cap = getattr(model.config, "sequence_len", max_new_tokens)
+    warmup_seq_len = max(2, min(seq_cap, max_new_tokens))
+    dummy_inputs = torch.zeros((batch_size, warmup_seq_len), dtype=torch.long, device=device)
+    dummy_targets = torch.zeros_like(dummy_inputs)
+    dynamo.mark_dynamic(dummy_inputs, 1, min=2, max=seq_cap)
+    dynamo.mark_dynamic(dummy_targets, 1, min=2, max=seq_cap)
+    return dummy_inputs, dummy_targets
+
 # Init model and tokenizer
 model, tokenizer, meta = load_model(source, device, phase="eval")
+warmup_tensors = None
 if torch_compile:
+    warmup_tensors = build_dynamic_warmup_tensors(model, device_batch_size, device)
     compile_kwargs = {}
     if torch_compile_mode:
         compile_kwargs["mode"] = torch_compile_mode
-        model = torch.compile(model, **compile_kwargs)
-    print0(f"Compiled model with torch.compile (mode={torch_compile_mode})")
+    model = torch.compile(model, **compile_kwargs)
+    with torch.no_grad():
+        warmup_inputs, warmup_targets = warmup_tensors
+        model(warmup_inputs, warmup_targets, loss_reduction="none")
+    del warmup_tensors
+    print0(f"Compiled model with torch.compile (mode={torch_compile_mode}) and warm-up ran with dynamic sequence length hints")
 engine = Engine(model, tokenizer) # for sampling rollouts
 
 # -----------------------------------------------------------------------------
@@ -142,15 +158,6 @@ class Batch:
     targets: torch.Tensor  # (B, T-1)
     rewards: torch.Tensor  # (B,)
     advantages: torch.Tensor  # (B,)
-
-
-def mark_sequence_length_dynamic(*tensors: torch.Tensor):
-    if not torch_compile:
-        return
-    for tensor in tensors:
-        if tensor is None or tensor.ndim < 2:
-            continue
-        dynamo.mark_dynamic(tensor, 1, max=max_new_tokens)
 
 
 @torch.no_grad()
@@ -329,7 +336,6 @@ for step in range(num_steps):
             targets = batch.targets[b0:b1]
             rewards = batch.rewards[b0:b1]
             advantages = batch.advantages[b0:b1]
-            mark_sequence_length_dynamic(inputs, targets)
             # Calculate log probabilities. Note that the loss calculates NLL = -logp, so we negate
             with autocast_ctx:
                 logp = -model(inputs, targets, loss_reduction='none').view_as(inputs) # (B, T)
