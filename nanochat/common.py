@@ -109,8 +109,8 @@ def compute_init():
     # torch.backends.cudnn.benchmark = False
 
     # Precision: prefer TF32 for matmuls/convs on supported GPUs (new PyTorch API)
-    # torch.backends.cuda.matmul.fp32_precision = "tf32"
-    # torch.backends.cudnn.conv.fp32_precision = "tf32"
+    torch.backends.cuda.matmul.fp32_precision = "tf32"
+    torch.backends.cudnn.conv.fp32_precision = "tf32"
 
     # Distributed setup: Distributed Data Parallel (DDP), optional
     ddp, ddp_rank, ddp_local_rank, ddp_world_size = get_dist_info()
